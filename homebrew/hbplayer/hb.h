@@ -50,8 +50,9 @@ void reader_restart(int i);		/* reader.c: forget where book i of the list was */
 void game_controls(int i);
 void calc_run(void);
 /* led.c: the NW-A91x notification light */
-enum { LED_NONE, LED_CHARGING, LED_FULL, LED_LOW, LED_ALARM, LED_FOCUS };
+#include "../common/led_a91x.h"
 extern int ui_led;
+extern int batt_power;		/* external power present (charger or USB) */
 void led_tick(void);
 void led_alert(int what, double secs);
 void led_stop(void);			/* calc.c: the calculator (Tools) */

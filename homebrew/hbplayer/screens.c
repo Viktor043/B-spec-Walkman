@@ -647,18 +647,20 @@ static void snrgy_icon_draw(int k, int x, int y, uint16_t c)
 int ui_home_tab;	/* 0 the list, 2 RESUME (the header) */
 const int home_order[] = { 4, HOME_BOOKS, 1, 5, HOME_TOOLS, 8 };	/* Music, Books, Audiobooks & Pods, Games, Tools, Settings (2026-11-17) */
 const int home_order_n = 6;
-#define HOME_RH 41	/* six rows between the header and the strip */
+#define HOME_RH 36	/* six rows, the block (with RESUME above it) centred between the top and the strip */
+#define HOME_Y0 (TITLE_H + 1 + (BOTTOM_Y - TITLE_H - 1 - home_order_n * HOME_RH) / 2)
 static void snrgy_home(int sel, const char *nowline)
 {
 	bg_fill(0, 0, W, BOTTOM_Y, 0);
 	/* the header: RESUME (what played last), reached with UP from the first row */
 	{
 		int tx = 12, w = gfx_text_w("Resume", 1), focus = ui_home_tab != 0;
-		if (focus) rrect(tx - 7, 2, w + 14, 24, 6, C_WHITE, 1);
-		gfx_text(tx, 3, "Resume", focus && ui_theme == 1 ? RGB(255, 255, 255) : RGB(0xE2, 0x06, 0x13), 1);	/* white on silver's black pill; red on black's grey pill */	/* Leica red; white on the pill (red on black didn't read), capitals centred in it */
+		int hy = HOME_Y0 - 31;	/* RESUME sits just above the rows, not pinned to the top */
+		if (focus) rrect(tx - 7, hy, w + 14, 24, 6, C_WHITE, 1);
+		gfx_text(tx, hy + 1, "Resume", focus && ui_theme == 1 ? RGB(255, 255, 255) : RGB(0xE2, 0x06, 0x13), 1);	/* white on silver's black pill; red on black's grey pill */	/* Leica red; white on the pill (red on black didn't read), capitals centred in it */
 	}
 	for (int r = 0; r < home_order_n; r++) {
-		int i = home_order[r], y = TITLE_H + 1 + r * HOME_RH, on = !ui_home_tab && i == sel;
+		int i = home_order[r], y = HOME_Y0 + r * HOME_RH, on = !ui_home_tab && i == sel;
 		int next_on = r + 1 < home_order_n && !ui_home_tab && home_order[r + 1] == sel;
 		uint16_t fg = on ? C_BLACK : C_WHITE;
 		if (on) rrect(4, y, W - 8, HOME_RH - 1, 6, C_WHITE, 1);
@@ -752,9 +754,10 @@ static int snrgy_chev(const struct list_view *v) { return SNRGY && !v->big && !v
 
 static int row_right(const struct list_view *v, int i)
 {
-	int right = W - 10 - (snrgy_chev(v) ? 18 : 0);
+	int sb = v->n > lv_rows(v);	/* the scrollbar moves the chevron and the value 10 px left: the label ends before them */
+	int right = W - 10 - (snrgy_chev(v) ? (sb ? 28 : 18) : 0);
 	if (v->mark && v->mark(i)) right = W - 30;
-	if (v->value) { const char *val = v->value(i); if (val && *val) right -= gfx_text_w(val, 1) + 8; }
+	if (v->value) { const char *val = v->value(i); if (val && *val) right -= gfx_text_w(val, 1) + 16; }	/* the "..." keeps a clear gap to the value */
 	return right;
 }
 
@@ -946,7 +949,8 @@ static void info_line(int y, struct img ic, const char *s)
 /* SNRGY now playing: the cover across the width, the counter and play mode under it, then the queue (album or
  * folder, in play order). One virtual column; while browsing (UP / DOWN) it scrolls to keep the cursor in view.
  * Time and progress are in the strip on top. */
-#define SP_INFO (PLAYER_ART_BIG + 2 + (BOTTOM_Y - PLAYER_ART_BIG - 2 - LINE_H) / 2)	/* the counter / mode row, centred under the cover */
+#define SP_CTRL (PLAYER_ART_BIG + 4)	/* prev / play-pause / next under the cover: a 28 px band */
+#define SP_INFO (BOTTOM_Y - LINE_H - 2)	/* the counter / mode row, right above the fold */
 #define SP_LIST BOTTOM_Y			/* the first queue row: just under the fold */
 static void icon_x4(int k, int cx, int cy, uint16_t c)	/* a line icon at 4x (the cover placeholder) */
 {
@@ -955,6 +959,25 @@ static void icon_x4(int k, int cx, int cy, uint16_t c)	/* a line icon at 4x (the
 		int a = snrgy_icon[k][(j / 4) * SNRGY_ICON + i / 4];
 		if (a > 6) gfx_fill(x0 + i, y0 + j, 1, 1, c);
 	}
+}
+/* the transport under the cover: |<<  > or ||  >>| centred in a band of height h at y (line icons, 2 px strokes) */
+static void transport(int y, int h, int paused, uint16_t c, uint16_t accent)
+{
+	int cy = y + h / 2, gap = 52;
+	for (int s = -1; s <= 1; s += 2) {	/* previous (s = -1) and next (s = 1): a bar and a triangle */
+		int cx = W / 2 + s * gap;
+		gfx_fill(s < 0 ? cx - 7 : cx + 6, cy - 7, 2, 15, c);	/* the bar on the outer side */
+		for (int j = -7; j <= 7; j++) {
+			int w = 1 + (7 - (j < 0 ? -j : j)) * 10 / 7;	/* the triangle's tip touches the bar */
+			if (s < 0) gfx_fill(cx + 5 - w, cy + j, w, 1, c);	/* tip left */
+			else gfx_fill(cx - 5, cy + j, w, 1, c);	/* tip right */
+		}
+	}
+	int r = 13;	/* play / pause in a red disc */
+	for (int j = -r; j <= r; j++) for (int i = -r; i <= r; i++) if (i * i + j * j <= r * r) gfx_fill(W / 2 + i, cy + j, 1, 1, accent);
+	uint16_t in = RGB(255, 255, 255);
+	if (paused) for (int j = -6; j <= 6; j++) gfx_fill(W / 2 - 3, cy + j, 1 + (6 - (j < 0 ? -j : j)) * 9 / 6, 1, in);	/* paused: show play */
+	else { gfx_fill(W / 2 - 5, cy - 6, 3, 13, in); gfx_fill(W / 2 + 2, cy - 6, 3, 13, in); }
 }
 static void snrgy_player(const struct player_view *v)
 {
@@ -993,6 +1016,7 @@ static void snrgy_player(const struct player_view *v)
 			}
 		}
 	}
+	if (SP_CTRL - off > -28) transport(SP_CTRL - off, 28, v->paused, C_WHITE, RGB(0xE2, 0x06, 0x13));
 	int iy = SP_INFO - off;
 	if (iy > -24 && iy < BOTTOM_Y) {
 		char b[32]; snprintf(b, sizeof b, "%d / %d", v->idx + 1, n);
@@ -1103,11 +1127,15 @@ void scr_player(const struct player_view *v, int full)
 
 /* ---------- messages / progress / downloads ---------- */
 
-void scr_message(const char *title, const char *l1, const char *l2)
+/* a title and up to two paragraphs that flow (each as long as it needs, the second after the first); returns the
+ * y below the text, for a caller that adds a line. 16 px side margins like the lists. */
+int scr_message(const char *title, const char *l1, const char *l2)
 {
 	scr_screen(title);
-	int n = gfx_text_wrap(14, 96, l1 ? l1 : "", C_WHITE, W - 28, 3, 24);
-	if (l2 && *l2) gfx_text_wrap(14, 104 + n * 24, l2, C_ORANGE, W - 28, 3, 24);
+	int y = 96, room = (BOTTOM_Y - 4 - y) / 22;
+	if (l1 && *l1) { int n = gfx_text_wrap(16, y, l1, C_WHITE, W - 32, room, 22); y += n * 22 + 10; room -= n; }
+	if (l2 && *l2 && room > 0) { int n = gfx_text_wrap(16, y, l2, C_ORANGE, W - 32, room, 22); y += n * 22 + 10; }
+	return y;
 }
 
 const char *const calc_keys[CALC_ROWS * CALC_COLS] = {
@@ -1144,15 +1172,15 @@ void scr_info(const char *label, const char *text)
 {
 	scr_screen("Info");
 	const uint16_t red = SNRGY ? RGB(0xE2, 0x06, 0x13) : C_ORANGE;
-	int cx = 24, cy = 50;
-	for (int j = -11; j <= 11; j++) for (int i = -11; i <= 11; i++) {
-		int d = i * i + j * j;
-		if (d <= 121) gfx_fill(cx + i, cy + j, 1, 1, red);
-	}
+	int cx = 26, cy = 46, ly = 36;	/* the label wraps to two lines at most; the rule and the text follow it */
+	for (int j = -11; j <= 11; j++) for (int i = -11; i <= 11; i++)
+		if (i * i + j * j <= 121) gfx_fill(cx + i, cy + j, 1, 1, red);
 	gfx_text_center(cx, cy - LINE_H / 2 + 1, "i", RGB(255, 255, 255), 1);
-	gfx_text_wrap(44, cy - LINE_H / 2 + 1, label, C_WHITE, W - 54, 2, 22);
-	gfx_fill(12, 76, W - 24, 1, SNRGY ? th_rule : C_DARK);
-	gfx_text_wrap(14, 86, text, C_GREY, W - 28, (BOTTOM_Y - 92) / 22, 22);
+	int n = gfx_text_wrap(46, ly, label, C_WHITE, W - 46 - 16, 2, 22);
+	int ry = ly + (n > 1 ? n : 1) * 22 + 6;
+	if (ry < cy + 18) ry = cy + 18;
+	gfx_fill(16, ry, W - 32, 1, SNRGY ? th_rule : C_DARK);
+	gfx_text_wrap(16, ry + 10, text, C_GREY, W - 32, (BOTTOM_Y - 4 - ry - 10) / 21, 21);
 }
 
 void scr_progress(const char *title, int step, int nsteps, const char *text, int secs, int spin, const char *hint)

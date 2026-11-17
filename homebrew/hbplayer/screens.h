@@ -123,10 +123,10 @@ extern int ui_aod, ui_aod_now, ui_strip_calm, ui_aod_level;	/* + the always-on b
 extern int ui_home_tab;		/* SNRGY home: 0 the list has the focus, 2 the RESUME header */
 extern const int home_order[];	/* SNRGY home: the slots in list order (no "Now playing": the RESUME tab is that) */
 extern const int home_order_n;
-#define PLAYER_ART_BIG 236	/* SNRGY player: the cover across the width */
+#define PLAYER_ART_BIG 212	/* SNRGY player: the cover (was 236 across the width; 2026-11-17 made room for prev / play / next) */
 void scr_volume(int vol, int volmax);
 void scr_hold(void);
-void scr_message(const char *title, const char *l1, const char *l2);
+int scr_message(const char *title, const char *l1, const char *l2);	/* returns the y below the text */
 /* Tools > Calculator (calc.c) */
 #define CALC_ROWS 5
 #define CALC_COLS 4

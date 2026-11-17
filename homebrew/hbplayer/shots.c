@@ -284,6 +284,7 @@ int main(int argc, char **argv)
 	{ struct focus_view fv = { 1122, 1500, 0, "brown noise", "bell every 5 min" }; fake_dl = 0; scr_focus(&fv); save("17_modo_foco"); }
 	{ struct calc_view cv = { "1234.5", "1200 + 34.5 =", 19 }; scr_calc(&cv); save("18_calculator"); }
 	scr_info("Always-on display", "When the screen times out, the status strip at the top stays lit: time, battery and what is playing."); save("19_info");
+	scr_info("Sony Walkman: power saving", "Experimental: Sony's own firmware runs at half the processor clock. Menus are slower, the battery lasts longer. Applies the next time you switch to Sony."); save("19b_info_long");
 	{	/* mosaic of albums and episode rows */
 		static uint16_t g[9][GRID_TH * GRID_TH], e[EP_THUMB * EP_THUMB];
 		for (int k = 0; k < 9; k++) for (int y = 0; y < GRID_TH; y++) for (int x = 0; x < GRID_TH; x++) g[k][y * GRID_TH + x] = RGB(30 + k * 25, 60 + y, 200 - k * 20);
@@ -336,8 +337,8 @@ int main(int argc, char **argv)
 		cur = aj; curv = ajv;
 		struct list_view a = { .title = "Settings", .n = 9, .label = lab, .value = val, .bar_y = -1 };
 		scr_list(&a); save("46_ajustes");
-		scr_message("Welcome", "Settings > Switch to Sony's Walkman: to Sony's firmware.", "In Sony's Walkman, hold HOME and VOL- together for 2 s to come back.");
-		gfx_text_wrap(14, 220, "OPTION: more choices on almost every screen.", C_GREY, W - 28, 2, 22);
+		{ int wy = scr_message("Welcome", "Settings > Switch to Sony's Walkman: to Sony's firmware.", "Back from Sony: hold HOME and VOL- for 2 s.");
+		gfx_text_wrap(16, wy, "OPTION: more choices anywhere.", C_GREY, W - 32, (BOTTOM_Y - 4 - wy) / 22, 22); }
 		save("47_bienvenida");
 		scr_message("Reset everything", "Clears positions, settings, Bluetooth and the boot mode. Your music stays.", ""); save("48_restablecer");
 	}

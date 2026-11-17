@@ -9,6 +9,7 @@
  *   hbusb STATEDIR      exit 0 = done (back to the player), 2 = /contents busy (touches /tmp/hb_usb_off) */
 #include "../common/gfx.h"
 #include "../common/keys.h"
+#include "../common/led_a91x.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -41,16 +42,30 @@ static void lg(const char *fmt, ...)
 	fclose(f);
 }
 
-/* the player's language setting ("lang 1" in STATEDIR/pos.txt = English) */
-static int lang_en(void)
+/* the NW-A91x light while the computer has the drive (the player isn't running then): breathing while charging,
+ * steady on external power without charging; "led 0" in STATEDIR/pos.txt (Display > Notification light) = off */
+static int led_fd = -1, led_shown = -1;
+static void led_open(void)
 {
-	char fn[512], line[256]; int r = 0;
+	if (access("/usr/local/bin/gemini-ICX1101", F_OK)) return;	/* the A91x's Sony UI binary: only it has a light */
+	char fn[512], line[256]; int on = 1;
 	snprintf(fn, sizeof fn, "%s/pos.txt", statedir);
 	FILE *f = fopen(fn, "r");
-	if (!f) return 0;
-	while (fgets(line, sizeof line, f)) if (!strncmp(line, "lang ", 5)) r = atoi(line + 5) == 1;
-	fclose(f);
-	return r;
+	if (f) { while (fgets(line, sizeof line, f)) if (!strncmp(line, "led ", 4)) on = atoi(line + 4) != 0; fclose(f); }
+	if (!on) return;
+	led_fd = open("/dev/icx1101_led", O_RDWR);
+	if (led_fd < 0) lg("led: cannot open /dev/icx1101_led (%d)", errno);
+}
+static void led_update(void)
+{
+	if (led_fd < 0) return;
+	int p = open("/dev/icx1087_power", O_RDONLY), st = 0;
+	if (p >= 0) { ioctl(p, 0x80045000, &st); close(p); }
+	int what = st & 0x80 ? LED_CHARGING : st & 0x20 ? LED_FULL : LED_NONE;
+	if (what == led_shown) return;
+	led_shown = what;
+	int a, b, r = led_a91x_set(led_fd, what, &a, &b);
+	lg("led: %d (power 0x%x; reset %d, off %d, pattern %d)", what, st, a, b, r);
 }
 
 /* the WALKMAN splash (as hbwatch) with a title and up to two grey lines ("a\nb") in the band below it */
@@ -151,7 +166,6 @@ static void firmware_update(void)
 int main(int argc, char **argv)
 {
 	if (argc > 1) statedir = argv[1];
-	(void)lang_en;
 	int fd = open("/dev/usbconn", O_RDWR);
 	if (fd < 0) { lg("no /dev/usbconn"); return 1; }
 	int st = status(fd);
@@ -176,6 +190,7 @@ int main(int argc, char **argv)
 	if (ioctl(fd, USB_ALLOW, 0) < 0) lg("allow ioctl failed (%d)", errno);
 	lg("contents handed to the computer");
 	screen("Connected over USB", "Eject it on the PC\nbefore unplugging");
+	led_open(); led_update();
 	int keys = open("/dev/input/event0", O_RDONLY | O_NONBLOCK);
 	time_t lit = time(0); int light = 1;
 	for (;;) {
@@ -188,6 +203,7 @@ int main(int argc, char **argv)
 			lit = time(0); if (!light) { gfx_backlight(80); light = 1; }
 		}
 		if (light && time(0) - lit > 30) { gfx_backlight(0); light = 0; }
+		led_update();
 		st = status(fd);
 		if (st == 2) firmware_update();
 		if (st == 0 || st < 0) break;

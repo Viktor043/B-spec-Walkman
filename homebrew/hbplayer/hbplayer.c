@@ -227,11 +227,12 @@ static void wd_disarm(void)
  * 177. Load lowers the reading by a few units (248 MHz, the first seconds after boot), so the shown percentage
  * follows a slow average and the cut-off needs three low readings in a row (one a minute apart is 20 s each). */
 static int last_adc, batt_low;	/* batt_low: consecutive readings at the cut-off level */
+int batt_power;
 static double adc_avg;
 static void battery_update(void)
 {
 	static time_t when;
-	if (when && time(0) - when < 20) return;
+	if (when && time(0) - when < 5) return;	/* 5 s: the light follows the cable quickly */
 	when = time(0);
 	int fd = open("/dev/icx1087_power", O_RDONLY);
 	if (fd < 0) return;
@@ -242,6 +243,7 @@ static void battery_update(void)
 	close(fd);
 	int was_charging = ui_st.charging;
 	ui_st.charging = (st & 0x80) != 0;
+	batt_power = (st & 0xa0) != 0;	/* 0x80 charging, 0x20 external power (seen as 0x28 / 0xa8; unplugged 0x08) */
 	last_adc = adc;
 	if (adc > 0) {
 		/* the average restarts when charging starts or stops (the charger lifts the reading at once) */
@@ -1973,8 +1975,8 @@ void factory_reset(void)
 static void first_run(void)
 {
 	settings_save();
-	scr_message("Welcome", "Settings > Switch to Sony's Walkman: to Sony's firmware.", "In Sony's Walkman, hold HOME and VOL- together for 2 s to come back.");
-	gfx_text_wrap(14, 220, "OPTION: more choices on almost every screen.", C_GREY, W - 28, 2, 22);
+	int wy = scr_message("Welcome", "Settings > Switch to Sony's Walkman: to Sony's firmware.", "Back from Sony: hold HOME and VOL- for 2 s.");
+	gfx_text_wrap(16, wy, "OPTION: more choices anywhere.", C_GREY, W - 32, (BOTTOM_Y - 4 - wy) / 22, 22);
 	gfx_flip();
 	int k;
 	do { idle_tick(0); k = getkey(1000); } while (k != K_PLAY && k != K_BACK);
