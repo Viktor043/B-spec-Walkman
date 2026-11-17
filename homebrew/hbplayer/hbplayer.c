@@ -592,8 +592,8 @@ static void np_update(void)
 		}
 	}
 	ui_st.np_title = t; ui_st.np_artist = a;
-	if (eng_active()) { struct eng_info e; eng_info(&e); ui_st.np_idx = e.idx; ui_st.np_n = e.n; ui_st.np_sec = e.sec; ui_st.np_total = e.total; }
-	else ui_st.np_idx = ui_st.np_n = ui_st.np_sec = ui_st.np_total = 0;
+	if (eng_active()) { struct eng_info e; eng_info(&e); ui_st.np_idx = e.idx; ui_st.np_n = e.n; ui_st.np_sec = e.sec; ui_st.np_total = e.total; ui_st.np_sleep = eng_sleep_left(); ui_st.np_speed = eng_speed; }
+	else ui_st.np_idx = ui_st.np_n = ui_st.np_sec = ui_st.np_total = ui_st.np_sleep = ui_st.np_speed = 0;
 }
 
 static void settings_flush(void);

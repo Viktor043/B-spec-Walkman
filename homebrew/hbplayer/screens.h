@@ -26,7 +26,7 @@ void ui_theme_set(int t);	/* palette, font, layout rotation; the next frame is d
 #define BOTTOM_Y (ui_theme ? 278 : 288)	/* SNRGY: the 3-row status strip is 42 px (gfx_rot) */
 
 /* playing: 0 idle, 1 playing, 2 paused. np_title / np_artist: what the bottom bar shows (0 = nothing) */
-struct ui_status { int batt, charging, bt, hold, playing; const char *np_title, *np_artist; int np_idx, np_n, np_sec, np_total;
+struct ui_status { int batt, charging, bt, hold, playing; const char *np_title, *np_artist; int np_idx, np_n, np_sec, np_total, np_sleep, np_speed;
 	int rd_on, rd_pct; const char *rd_l1, *rd_l2, *rd_left; };	/* reading (reader.c): the strip shows the book */
 extern struct ui_status ui_st;
 
@@ -123,7 +123,7 @@ extern int ui_aod, ui_aod_now, ui_strip_calm, ui_aod_level;	/* + the always-on b
 extern int ui_home_tab;		/* SNRGY home: 0 the list has the focus, 2 the RESUME header */
 extern const int home_order[];	/* SNRGY home: the slots in list order (no "Now playing": the RESUME tab is that) */
 extern const int home_order_n;
-#define PLAYER_ART_BIG 212	/* SNRGY player: the cover (was 236 across the width; 2026-11-17 made room for prev / play / next) */
+#define PLAYER_ART_BIG 236	/* SNRGY player: the cover across the width; one control row under it */
 void scr_volume(int vol, int volmax);
 void scr_hold(void);
 int scr_message(const char *title, const char *l1, const char *l2);	/* returns the y below the text */

@@ -199,7 +199,7 @@ int main(int argc, char **argv)
 		ui_aod_now = 1; scr_aod(); save("08f_siempre_activa"); ui_aod_now = 0;
 		ui_st.np_title = ot; scr_strip_marquee(10);
 	}
-	p.paused = 1; p.sleep_left = 30; ui_st.bt = 1; p.out = "BT"; ui_st.playing = 2;
+	p.paused = 1; p.sleep_left = 30; ui_st.np_sleep = 30; ui_st.bt = 1; p.out = "BT"; ui_st.playing = 2;
 	scr_player(&p, 1); save("09_pausa_timer_bt");
 	p.paused = 0; ui_st.playing = 1; scr_player(&p, 1); scr_volume(6, 30); save("10_volumen");
 	struct list_view o = { "Options", 3, 0, 0, lab, 0, 0, LI_NONE, 0, 0, 0, -1 };

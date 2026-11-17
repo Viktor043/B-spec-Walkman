@@ -145,9 +145,12 @@ static int dm_status_row(const char *left)
 	int x = 0;
 	char cnt[16] = "";
 	if (!left && ui_st.rd_on && ui_st.rd_l1) left = ui_st.rd_l1;
-	else if (!left && ui_st.np_n > 0) { snprintf(cnt, sizeof cnt, "%d/%d", ui_st.np_idx + 1, ui_st.np_n); left = cnt; }
-	if (ui_st.playing == 1) { for (int y = 0; y < 5; y++) for (int k = 0; k <= (y < 3 ? y : 4 - y); k++) dm_dot(k, y); x = 5; }
-	else if (ui_st.playing == 2) { for (int y = 0; y < 5; y++) { dm_dot(0, y); dm_dot(2, y); } x = 5; }
+	else if (!left && ui_st.np_n > 0) {	/* the counter, then the sleep timer and the speed (play / pause: the player's row) */
+		int l = snprintf(cnt, sizeof cnt, "%d/%d", ui_st.np_idx + 1, ui_st.np_n);
+		if (ui_st.np_sleep > 0 && l < (int)sizeof cnt) l += snprintf(cnt + l, sizeof cnt - l, " %d'", ui_st.np_sleep);
+		if (ui_st.np_speed && ui_st.np_speed != 100 && l < (int)sizeof cnt) snprintf(cnt + l, sizeof cnt - l, " %d.%dX", ui_st.np_speed / 100, ui_st.np_speed % 100 / 10);
+		left = cnt;
+	}
 	if (left && *left) dm_text(x + (x ? 4 : 0), 0, left, c - 2);
 	return c;
 }
@@ -656,8 +659,8 @@ static void snrgy_home(int sel, const char *nowline)
 	{
 		int tx = 12, w = gfx_text_w("Resume", 1), focus = ui_home_tab != 0;
 		int hy = HOME_Y0 - 31;	/* RESUME sits just above the rows, not pinned to the top */
-		if (focus) rrect(tx - 7, hy, w + 14, 24, 6, C_WHITE, 1);
-		gfx_text(tx, hy + 1, "Resume", focus && ui_theme == 1 ? RGB(255, 255, 255) : RGB(0xE2, 0x06, 0x13), 1);	/* white on silver's black pill; red on black's grey pill */	/* Leica red; white on the pill (red on black didn't read), capitals centred in it */
+		if (focus) rrect(tx - 7, hy, w + 14, 24, 6, ui_theme == 1 ? th_rule : C_WHITE, 1);	/* silver: a grey pill; black: the light one */
+		gfx_text(tx, hy + 1, "Resume", RGB(0xE2, 0x06, 0x13), 1);	/* always Leica red */	/* white on silver's black pill; red on black's grey pill */	/* Leica red; white on the pill (red on black didn't read), capitals centred in it */
 	}
 	for (int r = 0; r < home_order_n; r++) {
 		int i = home_order[r], y = HOME_Y0 + r * HOME_RH, on = !ui_home_tab && i == sel;
@@ -949,8 +952,7 @@ static void info_line(int y, struct img ic, const char *s)
 /* SNRGY now playing: the cover across the width, the counter and play mode under it, then the queue (album or
  * folder, in play order). One virtual column; while browsing (UP / DOWN) it scrolls to keep the cursor in view.
  * Time and progress are in the strip on top. */
-#define SP_CTRL (PLAYER_ART_BIG + 4)	/* prev / play-pause / next under the cover: a 28 px band */
-#define SP_INFO (BOTTOM_Y - LINE_H - 2)	/* the counter / mode row, right above the fold */
+#define SP_ROW ((PLAYER_ART_BIG + 2 + BOTTOM_Y) / 2)	/* the centre line of the control row between the cover and the fold */
 #define SP_LIST BOTTOM_Y			/* the first queue row: just under the fold */
 static void icon_x4(int k, int cx, int cy, uint16_t c)	/* a line icon at 4x (the cover placeholder) */
 {
@@ -960,24 +962,51 @@ static void icon_x4(int k, int cx, int cy, uint16_t c)	/* a line icon at 4x (the
 		if (a > 6) gfx_fill(x0 + i, y0 + j, 1, 1, c);
 	}
 }
-/* the transport under the cover: |<<  > or ||  >>| centred in a band of height h at y (line icons, 2 px strokes) */
-static void transport(int y, int h, int paused, uint16_t c, uint16_t accent)
+/* smooth shapes for the transport: each pixel of the shape's box is sampled 4 x 4 times and blended by coverage */
+static uint16_t mix565(uint16_t d, uint16_t c, int a)	/* a 0..16 */
 {
-	int cy = y + h / 2, gap = 52;
-	for (int s = -1; s <= 1; s += 2) {	/* previous (s = -1) and next (s = 1): a bar and a triangle */
-		int cx = W / 2 + s * gap;
-		gfx_fill(s < 0 ? cx - 7 : cx + 6, cy - 7, 2, 15, c);	/* the bar on the outer side */
-		for (int j = -7; j <= 7; j++) {
-			int w = 1 + (7 - (j < 0 ? -j : j)) * 10 / 7;	/* the triangle's tip touches the bar */
-			if (s < 0) gfx_fill(cx + 5 - w, cy + j, w, 1, c);	/* tip left */
-			else gfx_fill(cx - 5, cy + j, w, 1, c);	/* tip right */
+	int r = ((d >> 11) * (16 - a) + (c >> 11) * a) >> 4, g = (((d >> 5) & 63) * (16 - a) + ((c >> 5) & 63) * a) >> 4,
+	    b = ((d & 31) * (16 - a) + (c & 31) * a) >> 4;
+	return (uint16_t)(r << 11 | g << 5 | b);
+}
+struct aa_shape { int kind; float a, b, c, d, e, f; };	/* 0 rect x0 y0 x1 y1; 1 disc cx cy r; 2 triangle x0 y0 x1 y1 x2 y2 */
+static int aa_in(const struct aa_shape *s, float x, float y)
+{
+	if (s->kind == 0) return x >= s->a && x < s->c && y >= s->b && y < s->d;
+	if (s->kind == 1) return (x - s->a) * (x - s->a) + (y - s->b) * (y - s->b) <= s->c * s->c;
+	float d1 = (x - s->c) * (s->b - s->d) - (s->a - s->c) * (y - s->d), d2 = (x - s->e) * (s->d - s->f) - (s->c - s->e) * (y - s->f),
+	      d3 = (x - s->a) * (s->f - s->b) - (s->e - s->a) * (y - s->b);
+	return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+}
+static void aa_draw(struct aa_shape s, uint16_t col)
+{
+	float x0, y0, x1, y1;
+	if (s.kind == 0) { x0 = s.a; y0 = s.b; x1 = s.c; y1 = s.d; }
+	else if (s.kind == 1) { x0 = s.a - s.c; y0 = s.b - s.c; x1 = s.a + s.c; y1 = s.b + s.c; }
+	else { x0 = fminf(s.a, fminf(s.c, s.e)); x1 = fmaxf(s.a, fmaxf(s.c, s.e)); y0 = fminf(s.b, fminf(s.d, s.f)); y1 = fmaxf(s.b, fmaxf(s.d, s.f)); }
+	for (int y = (int)y0 - 1; y <= (int)y1 + 1; y++) {
+		if (y < 0 || y >= BOTTOM_Y) continue;
+		for (int x = (int)x0 - 1; x <= (int)x1 + 1; x++) {
+			if (x < 0 || x >= W) continue;
+			int n = 0;
+			for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) n += aa_in(&s, x + (i + 0.5f) / 4, y + (j + 0.5f) / 4);
+			if (n) fb[y * W + x] = mix565(fb[y * W + x], col, n);
 		}
 	}
-	int r = 13;	/* play / pause in a red disc */
-	for (int j = -r; j <= r; j++) for (int i = -r; i <= r; i++) if (i * i + j * j <= r * r) gfx_fill(W / 2 + i, cy + j, 1, 1, accent);
+}
+/* previous, play / pause (white on a red disc), next, centred at cy */
+static void transport(int cy, int paused, uint16_t c, uint16_t accent)
+{
+	float m = W / 2.0f, y = cy + 0.5f;
+	for (int s = -1; s <= 1; s += 2) {	/* a bar on the outer side and a triangle pointing to it */
+		float cx = m + s * 50;
+		aa_draw((struct aa_shape){ 0, s < 0 ? cx - 8 : cx + 5.5f, y - 7, s < 0 ? cx - 5.5f : cx + 8, y + 7 }, c);
+		aa_draw((struct aa_shape){ 2, cx - s * 6.5f, y - 7, cx - s * 6.5f, y + 7, cx + s * 5.5f, y }, c);	/* base inside, tip at the bar */
+	}
+	aa_draw((struct aa_shape){ 1, m, y, 14.5f }, accent);
 	uint16_t in = RGB(255, 255, 255);
-	if (paused) for (int j = -6; j <= 6; j++) gfx_fill(W / 2 - 3, cy + j, 1 + (6 - (j < 0 ? -j : j)) * 9 / 6, 1, in);	/* paused: show play */
-	else { gfx_fill(W / 2 - 5, cy - 6, 3, 13, in); gfx_fill(W / 2 + 2, cy - 6, 3, 13, in); }
+	if (paused) aa_draw((struct aa_shape){ 2, m - 4.5f, y - 7.5f, m - 4.5f, y + 7.5f, m + 8, y }, in);	/* paused: show play */
+	else { aa_draw((struct aa_shape){ 0, m - 5.5f, y - 6.5f, m - 2, y + 6.5f }, in); aa_draw((struct aa_shape){ 0, m + 2, y - 6.5f, m + 5.5f, y + 6.5f }, in); }
 }
 static void snrgy_player(const struct player_view *v)
 {
@@ -1016,22 +1045,15 @@ static void snrgy_player(const struct player_view *v)
 			}
 		}
 	}
-	if (SP_CTRL - off > -28) transport(SP_CTRL - off, 28, v->paused, C_WHITE, RGB(0xE2, 0x06, 0x13));
-	int iy = SP_INFO - off;
-	if (iy > -24 && iy < BOTTOM_Y) {
-		char b[32]; snprintf(b, sizeof b, "%d / %d", v->idx + 1, n);
-		int x = gfx_text(8, iy, b, C_WHITE, 1) + 12;
-		int mode_x = x;	/* the play mode icon(s) go here, the timer / speed / output after them */
-		if (!v->meta) x += SNRGY_ICON + 8 + (v->shuffle && v->repeat ? SNRGY_ICON + 4 : 0);
-		if (v->sleep_left > 0) { snprintf(b, sizeof b, "%d'", v->sleep_left); x = gfx_text(x, iy, b, C_GREY, 1) + 10; }
-		if (v->speed && v->speed != 100) { snprintf(b, sizeof b, "%d.%02dx", v->speed / 100, v->speed % 100); x = gfx_text(x, iy, b, C_GREY, 1) + 10; }
-		if (v->out && *v->out) gfx_text(x, iy, v->out, C_GREY, 1);
-		if (!v->meta) {	/* music: the play mode as an icon after the counter (in order / shuffle / repeat all / one) */
+	int ry = SP_ROW - off;	/* the one row under the cover: play mode | previous, play / pause, next | the queue below */
+	if (ry > -20 && ry < BOTTOM_Y + 20) {
+		transport(ry, v->paused, C_WHITE, RGB(0xE2, 0x06, 0x13));
+		if (!v->meta) {	/* music: in order / shuffle / repeat all / repeat one (shuffle + repeat: both icons) */
 			int m = v->shuffle ? 1 : v->repeat == 1 ? 2 : v->repeat == 2 ? 3 : 0;
-			snrgy_icon_draw(SNRGY_ICON_MODE + m, mode_x - 4, iy + 1, C_WHITE);
-			if (v->shuffle && v->repeat) snrgy_icon_draw(SNRGY_ICON_MODE + 1 + v->repeat, mode_x + SNRGY_ICON, iy + 1, C_WHITE);
+			snrgy_icon_draw(SNRGY_ICON_MODE + m, 8, ry - SNRGY_ICON / 2, C_WHITE);
+			if (v->shuffle && v->repeat) snrgy_icon_draw(SNRGY_ICON_MODE + 1 + v->repeat, 8 + SNRGY_ICON + 4, ry - SNRGY_ICON / 2, C_WHITE);
 		}
-		if (n > 1 && v->qtitle) snrgy_icon_draw(SNRGY_ICON_LISTDOWN, W - 8 - SNRGY_ICON, iy + 1, RGB(0xE2, 0x06, 0x13));	/* the queue is below */
+		if (n > 1 && v->qtitle) snrgy_icon_draw(SNRGY_ICON_LISTDOWN, W - 8 - SNRGY_ICON, ry - SNRGY_ICON / 2, RGB(0xE2, 0x06, 0x13));
 	}
 	for (int i = 0; i < n && v->qtitle; i++) {
 		int y = SP_LIST + i * rh - off;
