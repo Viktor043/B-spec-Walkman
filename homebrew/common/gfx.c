@@ -1,0 +1,623 @@
+#include "gfx.h"
+/* HB_PC: the PC build (screenshots, tests, the app simulator): no /dev/fb/0, no ioctls. Windows builds always are. */
+#if defined(_WIN32) && !defined(HB_PC)
+#define HB_PC
+#endif
+#include "font8x16.h"
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifndef HB_PC
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+uint16_t *fb;
+int gfx_fd = -1;
+static uint16_t *screen, *shown;	/* hardware frame buffer, copy of what is on it */
+
+int gfx_open(void)
+{
+	fb = calloc(W * H, 2);
+	shown = calloc(W * H, 2);
+	if (!fb || !shown) return -1;
+#ifndef HB_PC
+	int fd = open("/dev/fb/0", O_RDWR);
+	if (fd < 0) return -1;
+	gfx_fd = fd;
+	screen = mmap(0, W * H * 2, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (screen == MAP_FAILED) { screen = 0; return -1; }
+#endif
+	return 0;
+}
+
+/* gfx_rot: the LCD shows back-buffer row y at screen row (y + gfx_rot) % H. 0 = as drawn. The SNRGY themes use 32:
+ * the screens keep drawing Sony's layout (title bar 0..28, content, status bar 288..320) and the status bar, drawn
+ * as a dot-matrix strip, appears on top, the title and the content right under it. Only the copy to the LCD moves. */
+int gfx_rot;
+#define SROW(y) (((y) + gfx_rot) % H)
+
+/* show only a rectangle of the back buffer (animations that change a small part of the screen) */
+void gfx_flip_rect(int x, int y, int w, int h)
+{
+	if (x < 0) { w += x; x = 0; }
+	if (y < 0) { h += y; y = 0; }
+	if (x + w > W) w = W - x;
+	if (y + h > H) h = H - y;
+	for (int j = y; j < y + h; j++) {
+		if (screen) memcpy(screen + SROW(j) * W + x, fb + j * W + x, w * 2);
+		memcpy(shown + j * W + x, fb + j * W + x, w * 2);
+	}
+}
+
+/* the frame as it is on the LCD (fb with gfx_rot applied): screenshots */
+void gfx_composed(uint16_t *out)
+{
+	for (int j = 0; j < H; j++) memcpy(out + SROW(j) * W, fb + j * W, W * 2);
+}
+
+/* only the rows that changed since the last flip reach the (uncached) frame buffer: a list step or a clock tick
+ * touches a few dozen rows instead of 320. gfx_invalidate() after something else drew on the screen (a game). */
+static int shown_valid;
+/* one row equal? 32-bit words, 8 per step, OR of the XORs: the device glibc's memcmp was slower than copying the
+ * whole frame (measured: 9.6 ms to find "nothing changed" vs 6.3 ms for a full copy at 248 MHz) */
+/* copy n bytes (a multiple of 32, 4-aligned) 8 words at a time: the compiler turns it into LDM/STM bursts */
+void gfx_copy32(void *dst, const void *src, int n)
+{
+	uint32_t *d = dst; const uint32_t *s = src;
+	for (int i = 0; i < n / 4; i += 8) {
+		uint32_t a0 = s[i], a1 = s[i + 1], a2 = s[i + 2], a3 = s[i + 3], a4 = s[i + 4], a5 = s[i + 5], a6 = s[i + 6], a7 = s[i + 7];
+		d[i] = a0; d[i + 1] = a1; d[i + 2] = a2; d[i + 3] = a3; d[i + 4] = a4; d[i + 5] = a5; d[i + 6] = a6; d[i + 7] = a7;
+	}
+}
+
+static int row_same(const uint32_t *a, const uint32_t *b)
+{
+	for (int i = 0; i < W / 2; i += 8) {
+		uint32_t d = (a[i] ^ b[i]) | (a[i + 1] ^ b[i + 1]) | (a[i + 2] ^ b[i + 2]) | (a[i + 3] ^ b[i + 3])
+			| (a[i + 4] ^ b[i + 4]) | (a[i + 5] ^ b[i + 5]) | (a[i + 6] ^ b[i + 6]) | (a[i + 7] ^ b[i + 7]);
+		if (d) return 0;
+	}
+	return 1;
+}
+void gfx_invalidate(void) { shown_valid = 0; }
+void gfx_flip(void)
+{
+	if (!shown_valid) {
+		if (screen && !gfx_rot) gfx_copy32(screen, fb, W * H * 2);
+		else if (screen) { gfx_copy32(screen + gfx_rot * W, fb, (H - gfx_rot) * W * 2); gfx_copy32(screen, fb + (H - gfx_rot) * W, gfx_rot * W * 2); }
+		gfx_copy32(shown, fb, W * H * 2);
+		shown_valid = 1;
+		return;
+	}
+	for (int j = 0; j < H; j++) {
+		const uint16_t *a = fb + j * W;
+		uint16_t *b = shown + j * W;
+		if (row_same((const uint32_t *)a, (const uint32_t *)b)) continue;
+		if (screen) gfx_copy32(screen + SROW(j) * W, a, W * 2);	/* (glibc's memcpy: ~2x slower here, measured) */
+		gfx_copy32(b, a, W * 2);
+	}
+}
+
+/* the new frame (fb) pushes the old one (shown) out horizontally, eased, in 6 steps; rows above SLIDE_Y0 and from
+ * SLIDE_Y1 down (hbplayer's title bar and bottom status bar) are replaced in place instead */
+#define SLIDE_Y0 28
+#define SLIDE_Y1 (gfx_rot ? H - gfx_rot : 288)
+void gfx_slide(int dir, void (*between)(void))
+{
+	static const int steps[] = { 95, 170, 222, 240 };	/* 4 eased steps (was 6): ~40 ms instead of ~85 */
+	if (screen)
+		for (int k = 0; k < 4; k++) {
+			int off = steps[k];	/* how far the new frame has come in */
+			for (int y = SLIDE_Y0; y < SLIDE_Y1; y++) {	/* the title bar and the bottom status bar stay put */
+				uint16_t *d = screen + SROW(y) * W, *o = shown + y * W, *n = fb + y * W;
+				if (dir > 0) { memcpy(d, o + off, (W - off) * 2); memcpy(d + W - off, n, off * 2); }
+				else { memcpy(d, n + W - off, off * 2); memcpy(d + off, o, (W - off) * 2); }
+			}
+			for (int y = 0; y < SLIDE_Y0; y++) memcpy(screen + SROW(y) * W, fb + y * W, W * 2);
+			for (int y = SLIDE_Y1; y < H; y++) memcpy(screen + SROW(y) * W, fb + y * W, W * 2);
+			if (between) between();
+		}
+	gfx_invalidate();	/* the screen holds a composed frame: copy everything once */
+	gfx_flip();
+}
+
+/* the LCD controller's automatic refresh (QFB_SET_LCD_DISABLE): off while the screen is dark, like the Sony UI.
+ * Otherwise it keeps reading the whole frame from SDRAM ~30 times a second (~4.5 MB/s, 30 interrupts/s) for a screen
+ * nobody sees. Measured 2026-09-29: off -> 0.6 lcd irq/s, back on -> the panel updates again at once. */
+static int lcd_off;
+void gfx_lcd(int on)
+{
+#ifndef HB_PC
+	if (gfx_fd < 0 || lcd_off == !on) return;
+	int v = !on;
+	if (ioctl(gfx_fd, 0x40044E35, &v) == 0) lcd_off = !on;
+	if (on) gfx_invalidate();	/* the next flip rewrites the whole frame */
+#else
+	(void)on;
+#endif
+}
+
+/* Backlight level 0..100. The A829 kernel takes it the way Sony's gemini sets it: ioctl 'N' 15 with
+ * { level 0..100, steps 1..100, period >= 10 } (the old 'N' 8 with a bare int only switches on/off);
+ * fallbacks: 'N' 12 { 0..5, flag } and the old call. */
+int gfx_backlight(int level)
+{
+#ifndef HB_PC
+	if (level < 0) level = 0;
+	if (level > 100) level = 100;
+	int set[3] = { level, 1, 10 };
+	if (ioctl(gfx_fd, 0x40044E0F, set) == 0) return 0;
+	int bl[2] = { (level * 5 + 50) / 100, 0 };
+	if (level > 0 && bl[0] == 0) bl[0] = 1;
+	if (ioctl(gfx_fd, 0x40044E0C, bl) == 0) return 0;
+	return ioctl(gfx_fd, 0x40044E08, &level);
+#else
+	(void)level; return 0;
+#endif
+}
+
+/* ---------- resources (read-only, mapped from the firmware's files) ---------- */
+
+static const unsigned char *texdata, *fontdata, *animdata;
+static long texlen, fontlen, animlen;
+
+static const unsigned char *map_file(const char *path, long *len)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) return 0;
+	fseek(f, 0, SEEK_END); *len = ftell(f); fseek(f, 0, SEEK_SET);
+	const unsigned char *p = 0;
+#ifndef HB_PC
+	p = mmap(0, *len, PROT_READ, MAP_PRIVATE, fileno(f), 0);
+	if (p == MAP_FAILED) p = 0;
+#else
+	unsigned char *b = malloc(*len);
+	if (b && fread(b, 1, *len, f) == (size_t)*len) p = b; else free(b);
+#endif
+	fclose(f);
+	return p;
+}
+
+static unsigned rd32(const unsigned char *p) { return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24; }
+static unsigned rd16(const unsigned char *p) { return p[0] | p[1] << 8; }
+
+/* NW-A91x: its dui_tex.dpk has the same textures in another order, some groups nested one level deeper. The code
+ * keeps using the NW-A82x (group, item) ids; tex_a91x.h maps them to the A91x paths */
+#include "tex_a91x.h"
+static int tex_a91x;
+#define A91X_N ((int)(sizeof a91x_tex / sizeof *a91x_tex))
+
+/* offset of the node at path p[0..n-1] (each level: u32 size?, u32 count, 8 zero bytes, then 16-byte entries whose
+ * third u32 is the child's offset relative to the node; the file itself is the root at 0), or 0 */
+static unsigned tex_walk(const int *p, int n)
+{
+	unsigned o = 0;
+	for (int k = 0; k < n; k++) {
+		if (o + 16 > (unsigned)texlen || p[k] < 0 || (unsigned)p[k] >= rd32(texdata + o + 4)) return 0;
+		if (o + 16 + (unsigned)p[k] * 16 + 16 > (unsigned)texlen) return 0;
+		o += rd32(texdata + o + 16 + p[k] * 16 + 8);
+	}
+	return o + 16 <= (unsigned)texlen ? o : 0;
+}
+
+/* offset of texture (group, item) by its NW-A82x id, or 0 */
+static unsigned tex_off(int group, int item)
+{
+	if (!texdata || group < 0 || item < 0) return 0;
+	if (!tex_a91x) { int p[2] = { group, item }; return tex_walk(p, 2); }
+	for (int k = 0; k < A91X_N; k++)
+		if (a91x_tex[k].g == group && a91x_tex[k].i == item) {
+			int p[3] = { a91x_tex[k].p0, a91x_tex[k].p1, a91x_tex[k].p2 };
+			return tex_walk(p, p[2] < 0 ? 2 : 3);
+		}
+	return 0;
+}
+
+/* Sony font, sub-font 0 (Latin / Latin-1 / Cyrillic, 22 px, 1 bit per pixel) */
+static const unsigned char *fsub;
+static unsigned ffirst, flast, fmtab, fbmp;
+
+static int anim_intl;
+int gfx_anim_intl(void) { return anim_intl; }
+
+int gfx_load_res(const char *resdir)
+{
+	char p[512];
+	snprintf(p, sizeof p, "%s/dui_tex/dui_tex.dpk", resdir);
+	texdata = map_file(p, &texlen);
+	tex_a91x = texdata && texlen > 16 && rd32(texdata + 4) == 28;	/* NW-A91x (the A82x has 35 groups) */
+	snprintf(p, sizeof p, "%s/dui_tex/ICX1115_home_anim.dpk", resdir);	/* Japanese NW-A82x */
+	animdata = map_file(p, &animlen);
+	if (!animdata) {	/* international NWZ-A82x: same layout, its own icons */
+		snprintf(p, sizeof p, "%s/dui_tex/ICX1113_home_anim.dpk", resdir);
+		animdata = map_file(p, &animlen);
+		anim_intl = animdata != NULL;
+	}
+	snprintf(p, sizeof p, "%s/font/dui_font.dpk", resdir);
+	fontdata = map_file(p, &fontlen);
+	if (fontdata && fontlen > 200) {
+		fsub = fontdata + rd32(fontdata + 16 + 8);
+		ffirst = rd16(fsub + 12); flast = rd16(fsub + 14);
+		fmtab = rd32(fsub + 0x18); fbmp = rd32(fsub + 0x1c);
+	}
+	return (texdata ? 1 : 0) | (fontdata ? 2 : 0);
+}
+
+struct img gfx_tex(int group, int item)
+{
+	struct img im = { 0, 0, 0 };
+	unsigned io = tex_off(group, item);
+	if (!io) return im;
+	im.w = rd16(texdata + io); im.h = rd16(texdata + io + 2);
+	if (io + 16 + (unsigned)(im.w * im.h * 2) > (unsigned)texlen) { im.w = im.h = 0; return im; }
+	im.px = (const uint16_t *)(texdata + io + 16);
+	return im;
+}
+
+/* Sony's bold condensed digits (the player's time and "1/86" counter): group 31, 8-bit masks (format 4, one byte
+ * per pixel, 0..255 coverage); digit d = item 2*d (odd items are the same glyph rotated), ':' 22, '.' 26, '-' 30,
+ * '/' 36. Painted in colour c blended over what is there. Returns the width; draws only if draw. */
+static int digit_item(int ch)
+{
+	if (ch >= '0' && ch <= '9') return (ch - '0') * 2;
+	return ch == ':' ? 22 : ch == '.' ? 26 : ch == '-' ? 30 : ch == '/' ? 36 : -1;
+}
+
+static int sony_digits(int x, int y, const char *s, uint16_t c, int draw)
+{
+	int x0 = x;
+	for (; *s; s++) {
+		int it = digit_item((unsigned char)*s);
+		const unsigned char *px = 0; int w = 0, h = 0;
+		unsigned io = it >= 0 ? tex_off(31, it) : 0;
+		if (io && rd16(texdata + io + 4) == 4) {
+			w = rd16(texdata + io); h = rd16(texdata + io + 2);
+			if (io + 16 + (unsigned)(w * h) <= (unsigned)texlen) px = texdata + io + 16; else w = 0;
+		}
+		if (!px) { char one[2] = { *s, 0 }; x += draw ? gfx_text(x, y - 2, one, c, 1) - x : gfx_text_w(one, 1); continue; }
+		if (draw)
+			for (int j = 0; j < h; j++) {
+				int yy = y + j;
+				if (yy < 0 || yy >= H) continue;
+				for (int i = 0; i < w; i++) {
+					int a = px[j * w + i], xx = x + i;
+					if (!a || xx < 0 || xx >= W) continue;
+					uint16_t *d = fb + yy * W + xx;
+					if (a >= 250) { *d = c; continue; }
+					int r = ((*d >> 11) * (255 - a) + (c >> 11) * a) / 255, g = (((*d >> 5) & 63) * (255 - a) + ((c >> 5) & 63) * a) / 255, b = ((*d & 31) * (255 - a) + (c & 31) * a) / 255;
+					*d = (uint16_t)(r << 11 | g << 5 | b);
+				}
+			}
+		x += w;
+	}
+	return x - x0;
+}
+
+int gfx_digits(int x, int y, const char *s, uint16_t c) { return x + sony_digits(x, y, s, c, 1); }
+int gfx_digits_w(const char *s) { return sony_digits(0, 0, s, 0, 0); }
+
+int gfx_tex_n(int group)
+{
+	if (!texdata || group < 0) return 0;
+	if (tex_a91x) {	/* the A82x group's size: its highest mapped item + 1 (gfx_tex gives w = 0 for the gaps) */
+		int n = 0;
+		for (int k = 0; k < A91X_N; k++) if (a91x_tex[k].g == group && a91x_tex[k].i + 1 > n) n = a91x_tex[k].i + 1;
+		return n;
+	}
+	if ((unsigned)group >= rd32(texdata + 4)) return 0;
+	unsigned go = rd32(texdata + 16 + group * 16 + 8);
+	return go + 16 > (unsigned)texlen ? 0 : (int)rd32(texdata + go + 4);
+}
+
+/* the resource pages every screen needs, for a warm-up pass (see hbplayer/warm.c): the whole home animation, the
+ * font's sub-font 0 and the texture pack's index (each texture's pixels: scr_warm) */
+void gfx_warm_res(void (*touch)(const void *p, long n))
+{
+	if (animdata) touch(animdata, animlen);
+	if (fsub && fontdata) { long o = fsub - fontdata, n = fontlen - o; touch(fsub, n < 65536 ? n : 65536); }
+	if (texdata) { unsigned ng = rd32(texdata + 4); long n = 16 + (long)ng * 16; touch(texdata, n < texlen ? n : texlen); }
+}
+
+struct img gfx_anim(int item)
+{
+	struct img im = { 0, 0, 0 };
+	if (!animdata || item < 0 || (unsigned)item >= rd32(animdata + 4)) return im;
+	unsigned io = rd32(animdata + 16 + item * 16 + 8);
+	if (io + 16 > (unsigned)animlen) return im;
+	im.w = rd16(animdata + io); im.h = rd16(animdata + io + 2);
+	if (io + 16 + (unsigned)(im.w * im.h * 2) > (unsigned)animlen) { im.w = im.h = 0; return im; }
+	im.px = (const uint16_t *)(animdata + io + 16);
+	return im;
+}
+
+/* ---------- primitives ---------- */
+
+void gfx_fill(int x, int y, int w, int h, uint16_t c)
+{
+	if (x < 0) { w += x; x = 0; }
+	if (y < 0) { h += y; y = 0; }
+	if (x + w > W) w = W - x;
+	if (y + h > H) h = H - y;
+	if (w <= 0 || h <= 0) return;
+	uint32_t c2 = c | (uint32_t)c << 16;
+	for (int j = y; j < y + h; j++) {
+		uint16_t *d = fb + j * W + x;
+		int n = w;
+		if (((uintptr_t)d & 2) && n) { *d++ = c; n--; }	/* align to 32 bits, then two pixels per store */
+		uint32_t *d2 = (uint32_t *)d;
+		for (int i = 0; i < n / 2; i++) d2[i] = c2;
+		if (n & 1) d[n - 1] = c;
+	}
+}
+
+void gfx_vgrad(int x, int y, int w, int h, uint16_t top, uint16_t bottom)
+{
+	int r0 = top >> 11, g0 = (top >> 5) & 63, b0 = top & 31, r1 = bottom >> 11, g1 = (bottom >> 5) & 63, b1 = bottom & 31;
+	for (int j = 0; j < h; j++) {
+		int r = r0 + (r1 - r0) * j / (h > 1 ? h - 1 : 1), g = g0 + (g1 - g0) * j / (h > 1 ? h - 1 : 1), b = b0 + (b1 - b0) * j / (h > 1 ? h - 1 : 1);
+		gfx_fill(x, y + j, w, 1, (uint16_t)(r << 11 | g << 5 | b));
+	}
+}
+
+void gfx_frame(int x, int y, int w, int h, uint16_t c)
+{
+	gfx_fill(x, y, w, 1, c); gfx_fill(x, y + h - 1, w, 1, c);
+	gfx_fill(x, y, 1, h, c); gfx_fill(x + w - 1, y, 1, h, c);
+}
+
+static void blit(struct img im, int x, int y, int key)
+{
+	if (!im.w) return;
+	for (int j = 0; j < im.h; j++) {
+		int yy = y + j;
+		if (yy < 0 || yy >= H) continue;
+		const uint16_t *s = im.px + j * im.w;
+		for (int i = 0; i < im.w; i++) {
+			int xx = x + i;
+			if (xx < 0 || xx >= W || (key && !s[i])) continue;
+			fb[yy * W + xx] = s[i];
+		}
+	}
+}
+void gfx_blit(struct img im, int x, int y) { blit(im, x, y, 0); }
+void gfx_blit_key(struct img im, int x, int y) { blit(im, x, y, 1); }
+
+struct img gfx_scaled(struct img s, int w, int h, uint16_t *buf)
+{
+	struct img d = { w, h, buf };
+	if (!s.w) { d.w = 0; return d; }
+	/* nearest neighbour with 16.16 steps: no division per pixel (the ARM926 has no divide instruction) */
+	unsigned sx = ((unsigned)s.w << 16) / w, sy = ((unsigned)s.h << 16) / h, fy = 0;
+	for (int j = 0; j < h; j++, fy += sy) {
+		const uint16_t *row = s.px + (fy >> 16) * s.w;
+		unsigned fx = 0;
+		for (int i = 0; i < w; i++, fx += sx) buf[j * w + i] = row[fx >> 16];
+	}
+	return d;
+}
+
+/* ---------- text ---------- */
+
+static unsigned next_cp(const char **ps)
+{
+	const unsigned char *s = (const unsigned char *)*ps;
+	unsigned c = *s++;
+	if (c >= 0xE0 && s[0] && s[1]) { c = (c & 15) << 12 | (s[0] & 63) << 6 | (s[1] & 63); s += 2; }
+	else if (c >= 0xC0 && s[0]) { c = (c & 31) << 6 | (s[0] & 63); s++; }
+	*ps = (const char *)s;
+	return c;
+}
+
+/* Sony glyph: returns advance; draws if fb != 0 */
+static int sony_glyph(unsigned cp, int x, int y, uint16_t col, int scale, int draw)
+{
+	if (cp < ffirst || cp > flast) cp = '?';
+	unsigned g = rd16(fsub + 0x60 + (cp - ffirst) * 2);
+	if (!g) g = rd16(fsub + 0x60 + ('?' - ffirst) * 2);
+	const unsigned char *m = fsub + fmtab + g * 8;
+	int adv = rd16(m), rb = rd16(m + 2) >> 11, ht = rd16(m + 4);
+	const unsigned char *bm = fsub + fbmp + rd16(m + 6);
+	if (draw && scale == 1 && x >= 0 && x + adv <= W && y >= 0 && y + ht <= H) {	/* common case: fully on screen */
+		for (int r = 0; r < ht; r++) {
+			const unsigned char *row = bm + r * rb;
+			uint16_t *d = fb + (y + r) * W + x;
+			for (int i = 0; i < adv; i += 8) {
+				unsigned b = row[i >> 3];
+				if (!b) continue;	/* 8 empty pixels */
+				for (int k = 0; k < 8 && i + k < adv; k++) if (b & (0x80 >> k)) d[i + k] = col;
+			}
+		}
+	} else if (draw)
+		for (int r = 0; r < ht; r++)
+			for (int i = 0; i < adv; i++)
+				if (bm[r * rb + (i >> 3)] & (0x80 >> (i & 7))) {
+					if (scale == 1) { int xx = x + i, yy = y + r; if (xx >= 0 && xx < W && yy >= 0 && yy < H) fb[yy * W + xx] = col; }
+					else gfx_fill(x + i * scale, y + r * scale, scale, scale, col);
+				}
+	return adv * scale;
+}
+
+static int fallback_glyph(unsigned cp, int x, int y, uint16_t col, int scale, int draw)
+{
+	int gi = cp >= 32 && cp < 127 ? (int)cp - 32 : -1;
+	if (gi < 0) { const char *p = cp < 256 && cp ? strchr(font_extra, (int)cp) : 0; gi = p ? 95 + (int)(p - font_extra) : '?' - 32; }
+	if (draw)
+		for (int r = 0; r < 16; r++)
+			for (int b = 0; b < 8; b++)
+				if (font8x16[gi][r] & (0x80 >> b)) gfx_fill(x + b * scale, y + (r + 3) * scale, scale, scale, col);
+	return 8 * scale;
+}
+
+/* the SNRGY themes' font (common/ui_font.h from tools/mkfont.py, 4 bpp anti-aliased, Latin-1), when it was built
+ * in: gfx_face 1 draws with it, gfx_caps upper-cases. Code points it lacks fall back to Sony's font. */
+int gfx_face, gfx_caps;
+#define FONT_FIRST 32	/* both faces: code points 32..255 */
+#if defined(__has_include)
+#if __has_include("ui_font.h")
+#include "ui_font.h"
+#endif
+#if __has_include("book_font.h")
+#include "book_font.h"	/* gfx_face 2: the reader's serif (tools/mkfont.py --name book) */
+#endif
+#endif
+static unsigned caps_cp(unsigned cp)
+{
+	if (cp >= 'a' && cp <= 'z') return cp - 32;
+	if (cp >= 0xE0 && cp <= 0xFE && cp != 0xF7) return cp - 32;	/* à..þ -> À..Þ (not ÷) */
+	return cp;
+}
+#if defined(UI_FONT) || defined(BOOK_FONT)
+static uint16_t blend16(uint16_t d, uint16_t c, int a)	/* a 0..15 */
+{
+	int r = ((d >> 11) * (15 - a) + (c >> 11) * a) / 15, g = (((d >> 5) & 63) * (15 - a) + ((c >> 5) & 63) * a) / 15, b = ((d & 31) * (15 - a) + (c & 31) * a) / 15;
+	return (uint16_t)(r << 11 | g << 5 | b);
+}
+/* gfx_book_size: which of the reader face's sizes (the reader zooms); gfx_landscape: text drawn turned 90 degrees
+ * counter-clockwise (the Walkman held sideways, the keys on the right): x runs down the LCD, y from its right edge,
+ * so a page of 320 x 240 fills the whole screen */
+int gfx_book_size, gfx_landscape;
+int gfx_book_sizes(void)
+{
+#ifdef BOOK_FONT
+	return BOOK_FONT;
+#else
+	return 1;
+#endif
+}
+int gfx_book_line(void)
+{
+#ifdef BOOK_FONT
+	return book_font_lines[gfx_book_size < 0 ? 0 : gfx_book_size >= BOOK_FONT ? BOOK_FONT - 1 : gfx_book_size];
+#else
+	return LINE_H;
+#endif
+}
+static int face_glyph(const struct font_glyph *g, const unsigned char *pxd, unsigned cp, int x, int y, uint16_t col, int scale, int draw)
+{
+	const unsigned char *px;
+	int i = cp - FONT_FIRST, adv = g[i].adv, w = g[i].w, h = g[i].h;
+	if (!draw || !w) return adv * scale;
+	px = pxd + g[i].off;
+	for (int r = 0; r < h; r++)
+		for (int k = 0; k < w; k++) {
+			int n = r * w + k, a = n & 1 ? px[n >> 1] & 15 : px[n >> 1] >> 4;
+			if (!a) continue;
+			int xx = x + (g[i].x + k) * scale, yy = y + (g[i].y + r) * scale;
+			if (gfx_landscape) {	/* logical 320 x 240 -> the portrait buffer */
+				if (xx < 0 || xx >= H || yy < 0 || yy >= W) continue;
+				int px = W - 1 - yy, py = xx; xx = px; yy = py;
+			} else if (scale != 1) { if (a > 7) gfx_fill(xx, yy, scale, scale, col); continue; }
+			if (xx < 0 || xx >= W || yy < 0 || yy >= H) continue;
+			uint16_t *d = fb + yy * W + xx;
+			*d = a == 15 ? col : blend16(*d, col, a);
+		}
+	return adv * scale;
+}
+#endif
+static int glyph(unsigned cp, int x, int y, uint16_t col, int scale, int draw)
+{
+	if (gfx_caps) cp = caps_cp(cp);
+#ifdef BOOK_FONT
+	if (gfx_face == 2) {
+		int k = gfx_book_size < 0 ? 0 : gfx_book_size >= BOOK_FONT ? BOOK_FONT - 1 : gfx_book_size;
+		if (cp >= FONT_FIRST && cp <= 255 && book_font_gs[k][cp - FONT_FIRST].adv) return face_glyph(book_font_gs[k], book_font_pxs[k], cp, x, y, col, scale, draw);
+	}
+#endif
+#ifdef UI_FONT
+	if (gfx_face && cp >= FONT_FIRST && cp <= 255 && ui_font_g0[cp - FONT_FIRST].adv) return face_glyph(ui_font_g0, ui_font_px0, cp, x, y, col, scale, draw);	/* adv 0: not in the font */
+#endif
+	return fsub ? sony_glyph(cp, x, y, col, scale, draw) : fallback_glyph(cp, x, y, col, scale, draw);
+}
+
+static int text_raw(int x, int y, const char *s, uint16_t c, int scale)
+{
+	while (*s) x += glyph(next_cp(&s), x, y, c, scale, 1);
+	return x;
+}
+
+static int text_w_raw(const char *s, int scale)
+{
+	int w = 0;
+	while (*s) w += glyph(next_cp(&s), 0, 0, 0, scale, 0);
+	return w;
+}
+
+static void clip_raw(int x, int y, const char *s, uint16_t c, int maxw)
+{
+	if (text_w_raw(s, 1) <= maxw) { text_raw(x, y, s, c, 1); return; }
+	int dots = text_w_raw("...", 1), cx = x;
+	while (*s) {
+		const char *t = s;
+		int adv = glyph(next_cp(&t), 0, 0, 0, 1, 0);
+		if (cx + adv - x > maxw - dots) break;
+		cx += glyph(next_cp(&s), cx, y, c, 1, 1);
+	}
+	text_raw(cx, y, "...", c, 1);
+}
+
+
+static int wrap_raw(int x, int y, const char *s, uint16_t c, int maxw, int lines, int lineh)
+{
+	char line[256];
+	int l = 0;
+	while (*s && l < lines) {
+		while (*s == ' ') s++;
+		int n = 0, lastsp = -1;
+		/* grow the line word by word */
+		while (s[n]) {
+			int k = n;
+			while (s[k] && s[k] != ' ') k++;
+			if (k >= (int)sizeof line - 1) break;
+			memcpy(line, s, k); line[k] = 0;
+			if (text_w_raw(line, 1) > maxw && lastsp >= 0) break;
+			lastsp = k; n = k;
+			if (!s[n]) break;
+			n++;
+			if (text_w_raw(line, 1) > maxw) break;
+		}
+		int len = lastsp >= 0 ? lastsp : n;
+		if (len <= 0) len = (int)strlen(s);
+		if (len > (int)sizeof line - 1) len = sizeof line - 1;
+		memcpy(line, s, len); line[len] = 0;
+		if (l == lines - 1 && s[len]) clip_raw(x, y + l * lineh, s, c, maxw);
+		else clip_raw(x, y + l * lineh, line, c, maxw);
+		s += len;
+		l++;
+	}
+	return l;
+}
+
+/* the player's translation (hbplayer i18n.c): every text drawn or measured passes through it once, here at the
+ * public entry points (the raw ones above never translate again: a wrapped fragment must stay as it is) */
+const char *(*gfx_tr)(const char *s);
+#define TR(s) (gfx_tr ? gfx_tr(s) : (s))
+int gfx_text(int x, int y, const char *s, uint16_t c, int scale) { return text_raw(x, y, TR(s), c, scale); }
+int gfx_text_w(const char *s, int scale) { return text_w_raw(TR(s), scale); }
+void gfx_text_clip(int x, int y, const char *s, uint16_t c, int maxw) { clip_raw(x, y, TR(s), c, maxw); }
+void gfx_text_center(int cx, int y, const char *s, uint16_t c, int scale) { s = TR(s); text_raw(cx - text_w_raw(s, scale) / 2, y, s, c, scale); }
+int gfx_text_wrap(int x, int y, const char *s, uint16_t c, int maxw, int lines, int lineh) { return wrap_raw(x, y, TR(s), c, maxw, lines, lineh); }
+
+/* 2026-11-13: black screen with the WALKMAN logo alone. Cut from Sony's splash (17,19: logo at x 61-178, y 119-180)
+ * keeping only the white core (the smallest channel, as grey): the blue glow and gradient are gone. Screen rows
+ * (gfx_rot applied), so it sits in the same place under the SNRGY looks. */
+void gfx_walkman_logo(int sy0)
+{
+	for (int i = 0; i < W * H; i++) fb[i] = 0;
+	struct img s = gfx_tex(17, 19);
+	if (!s.w || s.h < 188) { gfx_text_center(W / 2, (sy0 + 20 - gfx_rot + H) % H, "WALKMAN", 0xFFFF, 1); return; }
+	for (int y = 112; y < 188; y++) {
+		uint16_t *d = fb + ((sy0 + y - 119 - gfx_rot + 2 * H) % H) * W;
+		for (int x = 50; x < 190; x++) {
+			uint16_t v = s.px[y * s.w + x];
+			int r = (v >> 11 & 31) * 255 / 31, g = (v >> 5 & 63) * 255 / 63, b = (v & 31) * 255 / 31;
+			int m = r < g ? r : g; if (b < m) m = b;
+			int l = (m - 40) * 255 / 170;
+			if (l <= 0) continue;
+			if (l > 255) l = 255;
+			d[x] = (uint16_t)((l >> 3) << 11 | (l >> 2) << 5 | (l >> 3));
+		}
+	}
+}
