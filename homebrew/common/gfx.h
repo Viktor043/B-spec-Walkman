@@ -32,7 +32,8 @@ void gfx_vgrad(int x, int y, int w, int h, uint16_t top, uint16_t bottom);
 void gfx_frame(int x, int y, int w, int h, uint16_t c);
 void gfx_blit(struct img im, int x, int y);		/* opaque */
 void gfx_blit_key(struct img im, int x, int y);	/* black (0x0000) pixels are transparent */
-struct img gfx_tex(int group, int item);	/* Sony texture; w = 0 if unavailable */
+struct img gfx_tex(int group, int item);
+void gfx_walkman_logo_a(int sy0, int a, int clear);	/* the gold WALKMAN logo at opacity a (0..256) */	/* Sony texture; w = 0 if unavailable */
 struct img gfx_anim(int item);
 int gfx_anim_intl(void);	/* international pack: alternate indices and reversed frames */
 int gfx_tex_n(int group);		/* items in a texture group */

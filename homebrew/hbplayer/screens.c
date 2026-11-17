@@ -242,9 +242,14 @@ static void strip_draw(int vol, int volmax)
 		x0 = dm_text(0, DM_R3, "VOL", DM_W) + 3; x1 = DM_W - dm_w(b) - 3;
 		dm_text(x1 + 3, DM_R3, b, DM_W);
 		int seg = volmax > 0 ? volmax : 30, span = x1 - x0;
-		for (int i = 0; i < seg && span > 0; i++) {	/* one solid block per step (2 dots wide), a baseline dot for the rest */
-			int sx = x0 + i * span / seg, bw = span / seg > 2 ? span / seg - 1 : 1;
-			for (int y = DM_R3; y < DM_R3 + 5; y++) for (int dx = 0; dx < bw; dx++) if (i < vol || y == DM_R3 + 4) dm_dot(sx + dx, y);
+		/* 10 rectangles: outlined when empty, filled from the left as the level rises (3 steps each at 30) */
+		int nb = 10, pitch = span / nb, bw = pitch - 2;
+		for (int i = 0; i < nb && bw >= 3; i++) {
+			int sx = x0 + i * pitch, on = (vol * nb - i * seg) * bw / seg;	/* filled columns of this block */
+			if (on < 0) on = 0;
+			if (on > bw) on = bw;
+			for (int dx = 0; dx < bw; dx++) for (int y = DM_R3; y < DM_R3 + 5; y++)
+				if (dx < on || dx == 0 || dx == bw - 1 || y == DM_R3 || y == DM_R3 + 4) dm_dot(sx + dx, y);
 		}
 		dm_flush();
 		return;
@@ -1300,6 +1305,63 @@ void scr_splash(const char *line)
 {
 	gfx_walkman_logo(118);
 	if (line) gfx_text_center(W / 2, srow(258), line, RGB(120, 120, 120), 1);
+}
+
+/* ---------- the welcome at power-on (2026-11-18): Sony's particle animation, then the gold logo ----------
+ * NW-A82x: Sony's own frames (dui_tex groups 0, 2, 3: blue particles swirling in, a ring of dots, the ring fading).
+ * NW-A91x: its texture pack has no such frames, so the same idea is drawn: 16 particles spiral in and settle on a
+ * ring, which fades as the logo comes up. 60 ms a frame; scr_welcome_frame returns 0 after the last one. */
+#define WEL_CY 149	/* screen row of the logo's centre: the animation is centred on it */
+static void blit_screen_center(struct img im, int cx, int cy)
+{
+	for (int j = 0; j < im.h; j++) {
+		int sy = cy - im.h / 2 + j;
+		if (sy < 0 || sy >= H) continue;
+		uint16_t *d = fb + srow(sy) * W;
+		for (int i = 0; i < im.w; i++) { int x = cx - im.w / 2 + i; if (x >= 0 && x < W) d[x] = im.px[j * im.w + i]; }
+	}
+}
+static void glow_dot(float cx, float cy, float r, int bright)	/* a soft blue particle, added to what is there */
+{
+	for (int y = (int)(cy - r) - 1; y <= (int)(cy + r) + 1; y++) {
+		if (y < 0 || y >= H) continue;
+		uint16_t *d = fb + srow(y) * W;
+		for (int x = (int)(cx - r) - 1; x <= (int)(cx + r) + 1; x++) {
+			if (x < 0 || x >= W) continue;
+			float dd = sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy)) / r;
+			if (dd >= 1) continue;
+			int a = (int)((1 - dd) * bright * (dd < 0.35f ? 1.6f : 1));	/* a bright core and a soft edge */
+			int rr = (d[x] >> 11) + (a * 6 >> 8), gg = ((d[x] >> 5) & 63) + (a * 36 >> 8), bb = (d[x] & 31) + (a * 31 >> 8);
+			d[x] = (uint16_t)((rr > 31 ? 31 : rr) << 11 | (gg > 63 ? 63 : gg) << 5 | (bb > 31 ? 31 : bb));
+		}
+	}
+}
+int scr_welcome_frame(int f)
+{
+	static const unsigned char seq[][2] = { {0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{0,6},{0,7},{0,8},{0,9},{0,10},
+		{2,0},{2,1},{2,2},{2,3},{3,0},{3,1},{3,2},{3,3},{3,4},{3,5},{3,6},{3,7},{3,8},{3,9},{3,10} };
+	const int n = sizeof seq / sizeof seq[0], logo_at = 18, last = n + 14;
+	if (f > last) return 0;
+	for (int i = 0; i < W * H; i++) fb[i] = 0;
+	int sony = gfx_tex(0, 0).w && gfx_tex(3, 10).w;
+	if (f < n) {
+		if (sony) { struct img im = gfx_tex(seq[f][0], seq[f][1]); if (im.w) blit_screen_center(im, W / 2, WEL_CY); }
+		else {	/* drawn: spiral in over 15 frames, hold the ring, then fade it */
+			float p = f < 15 ? f / 15.0f : 1, fade = f < 15 ? 1 : 1 - (f - 15) / 11.0f;
+			float ease = 1 - (1 - p) * (1 - p) * (1 - p);
+			for (int k = 0; k < 16; k++) {
+				float a = k * 6.2831853f / 16 + (1 - ease) * 3.0f, r = 56 + (1 - ease) * 110;
+				glow_dot(W / 2 + r * cosf(a), WEL_CY + r * sinf(a), 6 + (1 - ease) * 5, (int)(320 * fade));
+			}
+		}
+	}
+	if (f >= logo_at) {
+		int a = (f - logo_at) * 256 / 10;
+		gfx_walkman_logo_a(118, a > 256 ? 256 : a, 0);
+		int g = 40 + (a > 256 ? 256 : a) * 100 / 256;
+		gfx_text_center(W / 2, srow(258), "Welcome", RGB(g, g, g), 1);
+	}
+	return 1;
 }
 
 void scr_poweroff(void)

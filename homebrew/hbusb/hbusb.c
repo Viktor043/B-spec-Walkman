@@ -189,7 +189,7 @@ int main(int argc, char **argv)
 	sleep(1);	/* apl_conn -s 1 */
 	if (ioctl(fd, USB_ALLOW, 0) < 0) lg("allow ioctl failed (%d)", errno);
 	lg("contents handed to the computer");
-	screen("Connected over USB", "Eject it on the PC\nbefore unplugging");
+	screen("Connected over USB", 0);
 	led_open(); led_update();
 	int keys = open("/dev/input/event0", O_RDONLY | O_NONBLOCK);
 	time_t lit = time(0); int light = 1;

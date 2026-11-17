@@ -126,7 +126,8 @@ extern const int home_order_n;
 #define PLAYER_ART_BIG 236	/* SNRGY player: the cover across the width; one control row under it */
 void scr_volume(int vol, int volmax);
 void scr_hold(void);
-int scr_message(const char *title, const char *l1, const char *l2);	/* returns the y below the text */
+int scr_message(const char *title, const char *l1, const char *l2);
+int scr_welcome_frame(int f);	/* power-on welcome: frame f (60 ms each); 0 = finished */	/* returns the y below the text */
 /* Tools > Calculator (calc.c) */
 #define CALC_ROWS 5
 #define CALC_COLS 4

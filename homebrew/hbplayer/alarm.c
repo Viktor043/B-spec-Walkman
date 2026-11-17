@@ -88,7 +88,7 @@ void clock_menu(void)
 			else { int a = f == 4 ? gfx_text_w("00:", 2) : 0; fx = tx + a; fw = gfx_text_w("00", 2); fy = 128 + 46; }
 			gfx_fill(fx, fy, fw, 3, C_ORANGE);
 			gfx_text_center(W / 2, 196, "up/down: change", C_GREY, 1);
-			gfx_text_center(W / 2, 218, "left/right: day, month, year, hour, min", C_GREY, 1);
+			gfx_text_center(W / 2, 218, "left/right: next field", C_GREY, 1);	/* fits 240 px with margins */
 			gfx_text_center(W / 2, 240, "PLAY: save", C_GREY, 1);
 			gfx_flip();
 			redraw = 0;

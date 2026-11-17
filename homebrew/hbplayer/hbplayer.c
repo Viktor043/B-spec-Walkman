@@ -1994,6 +1994,19 @@ static void migrate_folders(void)
 static int run(void)
 {
 	cover_tick = tick_audio;
+	{	/* power-on (not a return from USB or from Sony's UI): the welcome animation; any key skips it */
+		FILE *u = fopen("/proc/uptime", "r"); double up = 999;
+		if (u) { if (fscanf(u, "%lf", &up) != 1) up = 999; fclose(u); }
+		if (up < 100) {
+			for (int f = 0; scr_welcome_frame(f); f++) {
+				gfx_flip();
+				struct ev e; double t0 = now();
+				int key = 0;
+				while (!key && now() - t0 < 0.06) if (raw_event(&e, 20) && e.type == 1 && KEY_PRESSED(e.value)) key = 1;
+				if (key) break;
+			}
+		}
+	}
 	scr_splash("Opening..."); gfx_flip();
 	int first = 0;
 	{ char p[PATHLEN + 16]; snprintf(p, sizeof p, "%s/pos.txt", statedir); first = access(p, F_OK) != 0; }

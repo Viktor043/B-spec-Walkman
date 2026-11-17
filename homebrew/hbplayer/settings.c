@@ -328,8 +328,9 @@ static void about_screen(void)
 	gfx_text_center(W / 2, y, fr, C_GREY, 1); y += 20;
 	gfx_text_center(W / 2, y, st, C_GREY, 1); y += 24;
 	gfx_text_center(W / 2, y, "License: GPL-2.0", C_GREY, 1); y += 20;
-	gfx_text_center(W / 2, y, "libmad · FAAD2 · lwIP · Sonic", C_GREY, 1); y += 20;
-	gfx_text_center(W / 2, y, "gnuboy · Mbed TLS · TJpgDec", C_GREY, 1);
+	gfx_text_center(W / 2, y, "libmad · FAAD2 · Sonic", C_GREY, 1); y += 20;	/* each line under 208 px: 16 px margins */
+	gfx_text_center(W / 2, y, "lwIP · Mbed TLS", C_GREY, 1); y += 20;
+	gfx_text_center(W / 2, y, "gnuboy · TJpgDec", C_GREY, 1);
 	gfx_flip();
 	while (getkey(500) != K_BACK) idle_tick(0);
 }

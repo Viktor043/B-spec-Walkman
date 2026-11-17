@@ -603,11 +603,27 @@ int gfx_text_wrap(int x, int y, const char *s, uint16_t c, int maxw, int lines, 
 /* 2026-11-13: black screen with the WALKMAN logo alone. Cut from Sony's splash (17,19: logo at x 61-178, y 119-180)
  * keeping only the white core (the smallest channel, as grey): the blue glow and gradient are gone. Screen rows
  * (gfx_rot applied), so it sits in the same place under the SNRGY looks. */
-void gfx_walkman_logo(int sy0)
+/* 2026-11-18: the logo in gold, a metallic gradient down its height (dark gold, a bright band, warm gold, dark),
+ * like the gold lettering of the original PlayStation's start-up; l (0..255) is the logo's own shading */
+static uint16_t logo_gold(int l, int t)	/* t 0..255 from the logo's top to its bottom */
 {
-	for (int i = 0; i < W * H; i++) fb[i] = 0;
+	static const unsigned char st[5][4] = { { 0, 0x8a, 0x66, 0x1a }, { 95, 0xfb, 0xe8, 0x9c }, { 140, 0xe6, 0xbd, 0x52 },
+		{ 205, 0xb8, 0x88, 0x28 }, { 255, 0x7a, 0x55, 0x14 } };
+	int k = 0;
+	while (k < 3 && t > st[k + 1][0]) k++;
+	int span = st[k + 1][0] - st[k][0], f = span ? (t - st[k][0]) * 256 / span : 0;
+	int r = (st[k][1] * (256 - f) + st[k + 1][1] * f) >> 8, g = (st[k][2] * (256 - f) + st[k + 1][2] * f) >> 8,
+	    b = (st[k][3] * (256 - f) + st[k + 1][3] * f) >> 8;
+	r = r * l / 255; g = g * l / 255; b = b * l / 255;
+	return (uint16_t)((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3));
+}
+
+/* the gold logo with its top at screen row sy0, at opacity a (0..256) over what is there; clear: black first */
+void gfx_walkman_logo_a(int sy0, int a, int clear)
+{
+	if (clear) for (int i = 0; i < W * H; i++) fb[i] = 0;
 	struct img s = gfx_tex(17, 19);
-	if (!s.w || s.h < 188) { gfx_text_center(W / 2, (sy0 + 20 - gfx_rot + H) % H, "WALKMAN", 0xFFFF, 1); return; }
+	if (!s.w || s.h < 188) { gfx_text_center(W / 2, (sy0 + 20 - gfx_rot + H) % H, "WALKMAN", logo_gold(255 * a / 256, 110), 1); return; }
 	for (int y = 112; y < 188; y++) {
 		uint16_t *d = fb + ((sy0 + y - 119 - gfx_rot + 2 * H) % H) * W;
 		for (int x = 50; x < 190; x++) {
@@ -617,7 +633,13 @@ void gfx_walkman_logo(int sy0)
 			int l = (m - 40) * 255 / 170;
 			if (l <= 0) continue;
 			if (l > 255) l = 255;
-			d[x] = (uint16_t)((l >> 3) << 11 | (l >> 2) << 5 | (l >> 3));
+			uint16_t c = logo_gold(l, (y - 112) * 255 / 75);
+			if (a >= 256) { d[x] = c; continue; }
+			uint16_t o = d[x];	/* fade in over the background */
+			int rr = ((o >> 11) * (256 - a) + (c >> 11) * a) >> 8, gg = (((o >> 5) & 63) * (256 - a) + ((c >> 5) & 63) * a) >> 8,
+			    bb = ((o & 31) * (256 - a) + (c & 31) * a) >> 8;
+			d[x] = (uint16_t)(rr << 11 | gg << 5 | bb);
 		}
 	}
 }
+void gfx_walkman_logo(int sy0) { gfx_walkman_logo_a(sy0, 256, 1); }
