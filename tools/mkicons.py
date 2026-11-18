@@ -22,8 +22,9 @@ def make(kind):
     elif kind == 'music':
         d.line([P(8, 17), P(8, 4), P(19, 2), P(19, 15)], fill=c, width=w); d.line([P(8, 6), P(19, 4)], fill=c, width=w * 2)
         for cx, cy in ((5.3, 17.3), (16.3, 15.3)): d.ellipse([P(cx - 3.2, cy - 2.6), P(cx + 3.2, cy + 2.6)], fill=c)
-    elif kind == 'games':
-        d.rounded_rectangle([P(1.5, 6), P(20.5, 17)], radius=5.5 * k, outline=c, width=w)
+    elif kind == 'games':  # 10 % larger than the other icons (2026-11-18), scaled about its centre
+        P = lambda a, b: ((11 + (a - 11) * 1.1) * k, (11.5 + (b - 11.5) * 1.1) * k)
+        d.rounded_rectangle([P(1.5, 6), P(20.5, 17)], radius=5.5 * 1.1 * k, outline=c, width=w)
         d.line([P(5.5, 11.5), P(10, 11.5)], fill=c, width=w); d.line([P(7.75, 9.25), P(7.75, 13.75)], fill=c, width=w)
         d.ellipse([P(13.3, 8.8), P(15.7, 11.2)], fill=c); d.ellipse([P(15.8, 11.8), P(18.2, 14.2)], fill=c)
     elif kind == 'bt':

@@ -1865,7 +1865,7 @@ void play_key(void)
 	if (play_since > 0) { playback_stop(); while (play_since > 0) poll_key(40); return; }
 	beep(BEEP_ONE);
 	if (eng_active()) eng_toggle();
-	else if (!resume_last()) eng_note("Nothing to play");
+	else resume_last();	/* nothing to resume: nothing happens */
 }
 void playback_stop(void)
 {

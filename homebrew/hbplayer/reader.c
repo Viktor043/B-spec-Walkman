@@ -577,6 +577,18 @@ static char *ctext;
 static long clen;
 static int cur_ch = -1;
 
+static int ctext_blank(void)	/* the section has no text (an EPUB's cover page: just an image) */
+{
+	for (long i = 0; i < clen; i++) if ((unsigned char)ctext[i] > ' ') return 0;
+	return 1;
+}
+static int load_chapter(int i);
+/* load section i, or the nearest one with text in direction dir (+1 forward, -1 back): image-only pages are skipped */
+static void load_text_chapter(int i, int dir)
+{
+	load_chapter(i);
+	while (ctext_blank() && cur_ch + dir >= 0 && cur_ch + dir < bk.nch) load_chapter(cur_ch + dir);
+}
 static int load_chapter(int i)
 {
 	free(ctext); ctext = 0; clen = 0; cur_ch = -1;
@@ -725,7 +737,8 @@ static void reader_run(const char *path)
 	struct mark *m = pos_of(path);
 	int ch = m && m->ch < bk.nch ? m->ch : 0;
 	long off = m ? m->off : 0;
-	load_chapter(ch);
+	load_text_chapter(ch, 1);	/* a fresh book opens on its first page with text, not the cover image */
+	if (cur_ch != ch) off = 0;
 	int page = page_of(off), redraw = 1, turns = 0, saved_rot = gfx_rot;
 	ui_keep_awake = 1;	/* the screen stays on while a book is open */
 	if (ui_book_land) { ui_fullscreen = 1; gfx_rot = 0; gfx_invalidate(); }
@@ -737,6 +750,10 @@ static void reader_run(const char *path)
 		int k = getkey(1000);
 		if (k == K_REDRAW) { redraw = 1; continue; }
 		if (k < 0) continue;
+		if (ui_book_land) {	/* held sideways (the text turned clockwise): the d-pad turns with it, as in the games:
+				 * LEFT points down = next page, RIGHT up = previous, UP / DOWN = brightness down / up */
+			if (k == K_UP) k = K_LEFT; else if (k == K_RIGHT) k = K_UP; else if (k == K_DOWN) k = K_RIGHT; else if (k == K_LEFT) k = K_DOWN;
+		}
 		int np = npages(), moved = 0;
 		if (k == K_VOLUP || k == K_VOLDN) { volume_key(k); if (!ui_book_land) redraw_strip = 1; continue; }	/* the music's volume */
 		if (k == K_PLAY) { play_key(); if (!ui_book_land) redraw_strip = 1; continue; }	/* PLAY: the playback key (2026-11-18) */
@@ -750,11 +767,11 @@ static void reader_run(const char *path)
 		}
 		if (k == K_DOWN) {
 			if (page + 1 < np) page++;
-			else if (cur_ch + 1 < bk.nch) { load_chapter(cur_ch + 1); page = 0; }
+			else if (cur_ch + 1 < bk.nch) { load_text_chapter(cur_ch + 1, 1); page = 0; }
 			moved = 1;
 		} else if (k == K_UP) {
 			if (page > 0) page--;
-			else if (cur_ch > 0) { load_chapter(cur_ch - 1); page = npages() - 1; }
+			else if (cur_ch > 0) { int was = cur_ch; load_text_chapter(cur_ch - 1, -1); if (ctext_blank()) load_chapter(was); page = npages() - 1; }
 			moved = 1;
 		} else if (k == K_OPTION) {
 			int nch = cur_ch; long noff = 0;
@@ -768,7 +785,7 @@ static void reader_run(const char *path)
 				if (!nlines) add_line(0, 0, 1, 0);
 				page = page_of(here);
 				settings_save();
-			} else if (r) { load_chapter(nch); page = page_of(noff); moved = 1; }
+			} else if (r) { load_text_chapter(nch, 1); page = cur_ch == nch ? page_of(noff) : 0; moved = 1; }
 			redraw = 1;
 		} else if (k == K_BACK) break;
 		if (moved) { redraw = 1; if (++turns % 5 == 0) pos_put(bk.path, cur_ch, lines[page * rd_lines() < nlines ? page * rd_lines() : 0].off, book_pct(page)); }
