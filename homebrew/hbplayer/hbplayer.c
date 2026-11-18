@@ -462,11 +462,11 @@ static int opt_dark, opt_stage;
 #define OPT_POWER 4.0
 static void power_prompt(void);
 
-static int option_tick(void)	/* while OPTION is held: a hint at 1.5 s, the question at 4 s */
+static int option_tick(void)	/* while OPTION is held: a hint at 1.5 s, power off at 4 s (no question since 2026-11-18) */
 {
 	double held = now() - opt_since;
-	if (held >= OPT_POWER) { opt_since = 0; opt_stage = 0; lg("option held %.1f s: power off?", held); power_prompt(); return K_REDRAW; }
-	if (held >= OPT_HINT && opt_stage < 1) { opt_stage = 1; message("Power", "Keep holding OPTION:", "power off"); }
+	if (held >= OPT_POWER) { opt_since = 0; opt_stage = 0; lg("option held %.1f s: power off", held); power_prompt(); return K_REDRAW; }
+	if (held >= OPT_HINT && opt_stage < 1) { opt_stage = 1; message("Power", "Keep holding OPTION to power off...", ""); }
 	return -1;
 }
 
@@ -1782,19 +1782,11 @@ void power_menu(void)
 
 static int resume_last(void);
 
-/* OPTION held 4 s on any screen: "Power off?" with Cancel preselected; never stacked, never during a game */
+/* OPTION held 4 s on any screen: power off straight away (the hint at 1.5 s was the warning); never in a game */
 static void power_prompt(void)
 {
-	static int open;
-	if (open || in_game) return;
-	open = 1;
-	wake();
-	snprintf(pw_items[0], 40, "Power off"); snprintf(pw_items[1], 40, "Cancel");
-	struct list_view v = { alarm_cfg.on ? "Power off? (no alarm)" : "Power off?", 2, 1, 0, pw_label, 0, 0, LI_NONE, 0, 0 };
-	int s = list_run(&v);
-	open = 0;
-	if (s == 0) power_off_full("OPTION held");
-	force_redraw = 1;
+	if (in_game) return;
+	power_off_full("OPTION held");
 }
 
 /* the wake-up alarm: resume the last thing played (or bells) with the volume rising; a key ends the ramp */

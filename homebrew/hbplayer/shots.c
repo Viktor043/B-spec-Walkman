@@ -130,7 +130,7 @@ int main(int argc, char **argv)
 	struct list_view st = { "Settings", 10, 0, 0, lab, val, 0, LI_NONE, 0, 0, 0, -1 };
 	cur = set_l; curv = set_v; scr_list(&st); save("04c_ajustes");
 	{ struct list_view dv = { "Display", 8, 3, 0, lab, val, 0, LI_NONE, 0, 0, 0, -1 }; cur = disp_l; curv = disp_v; scr_list(&dv); save("04j_pantalla"); }
-	{ struct list_view pw = { "Power off?", 2, 1, 0, lab, 0, 0, LI_NONE, 0, 0, 0, -1 }; cur = pw_l; scr_list(&pw); save("04k_apagar"); }
+	scr_message("Power", "Keep holding OPTION to power off...", ""); save("04k_apagar");	/* OPTION held 1.5 s; at 4 s it powers off */
 	/* OPTION inside each menu (ctxopt.c builds the same rows as on the device) */
 	{ static const char *const kname[] = { "", "30_opciones_musica", "31_opciones_albumes", "32_opciones_audiolibros", "33_opciones_libros", "34_opciones_juegos" };
 	  struct opt_state os = { 1, 0, 1, 0, 0, 125, 30, 1, 0 };

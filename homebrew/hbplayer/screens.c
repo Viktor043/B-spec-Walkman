@@ -1051,12 +1051,13 @@ static void round_corners(int x, int y, int s)
 /* no cover (2026-11-18): a black square with a faint dot grid (the old analyzer's background), and a note made of
  * its dots: the grid points inside the note shape light up red, 2 x 2 px each */
 static void note_square(int x0, int y0, int s)
-{
+{	/* black: black with dark dots; silver: a warm grey card with darker dots (the dark square looked like a hole) */
+	uint16_t note_bg = ui_theme == 1 ? th_surf : 0, note_dot = ui_theme == 1 ? th_rule : RGB(28, 28, 30);
 	for (int j = 0; j < s; j++) {
 		int y = y0 + j;
 		if (y < 0 || y >= BOTTOM_Y) continue;
 		uint16_t *d = fb + y * W + x0;
-		for (int i = 0; i < s; i++) d[i] = ((i & 3) == 1 && (j & 3) == 1) ? RGB(28, 28, 30) : 0;
+		for (int i = 0; i < s; i++) d[i] = ((i & 3) == 1 && (j & 3) == 1) ? note_dot : note_bg;
 	}
 	int ns = 129, nx = x0 + (s - ns) / 2, ny = y0 + (s - ns) / 2;	/* the note's box, centred (15 % smaller than 152) */
 	for (int j = 1; j < s; j += 4) for (int i = 1; i < s; i += 4) {
@@ -1099,8 +1100,8 @@ static void snrgy_player(const struct player_view *v)
 		transport(ry, v->paused, v->press_btn, v->press_scale ? v->press_scale : 1000);
 		if (!v->meta) {	/* music: in order / shuffle / repeat all / repeat one (shuffle + repeat: both icons) */
 			int m = v->shuffle ? 1 : v->repeat == 1 ? 2 : v->repeat == 2 ? 3 : 0;
-			snrgy_icon_draw(SNRGY_ICON_MODE + m, 8, ry - SNRGY_ICON / 2, C_WHITE);
-			if (v->shuffle && v->repeat) snrgy_icon_draw(SNRGY_ICON_MODE + 1 + v->repeat, 8 + SNRGY_ICON + 4, ry - SNRGY_ICON / 2, C_WHITE);
+			snrgy_icon_draw(SNRGY_ICON_MODE + m, 8, ry - SNRGY_ICON / 2, C_GREY);	/* the same grey as previous / next */
+			if (v->shuffle && v->repeat) snrgy_icon_draw(SNRGY_ICON_MODE + 1 + v->repeat, 8 + SNRGY_ICON + 4, ry - SNRGY_ICON / 2, C_GREY);
 		}
 		if (n > 1 && v->qtitle) snrgy_icon_draw(SNRGY_ICON_LISTDOWN, W - 8 - SNRGY_ICON, ry - SNRGY_ICON / 2, RGB(0xE2, 0x06, 0x13));
 	}
