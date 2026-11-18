@@ -49,6 +49,9 @@ void voice_quick_menu(void);		/* settings.c: speed, silence trimming, voice boos
 void reader_restart(int i);		/* reader.c: forget where book i of the list was */
 void game_controls(int i);
 void calc_run(void);
+void play_key(void);		/* PLAY outside games: play / pause, held 3 s stop (hbplayer.c) */
+void playback_stop(void);
+int play_down(void);
 /* led.c: the NW-A91x notification light */
 #include "../common/led_a91x.h"
 extern int ui_led;

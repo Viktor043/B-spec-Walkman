@@ -12,7 +12,7 @@ did the original firmware hook, player, DSP and emulator work. This repository c
 
 - **Drag-and-drop music**: MP3, FLAC (up to 24-bit, resampled to 44.1 kHz), AAC/M4A and non-DRM ATRAC straight from
   the drive. Gapless MP3, ReplayGain, cover art, lyrics (`.lrc`), equalizers and Sony's DSP effects.
-- **Audiobooks & Pods**: one folder per book or show in `Audiobooks` (or `Podcasts`); resume per file, speed
+- **Pods & Audiobooks**: one folder per book or show in `Audiobooks` (or `Podcasts`); resume per file, speed
   0.75–2× with pitch kept, silence trimming, voice boost, chapters, sleep timer.
 - **Books**: EPUB and TXT reader, four text sizes, portrait or landscape.
 - **Games**: Game Boy / Color (gnuboy), NES (agnes), GBA (gpSP), Doom (doomgeneric).
@@ -25,6 +25,8 @@ did the original firmware hook, player, DSP and emulator work. This repository c
 - **Bluetooth audio** (A2DP) on the A82x.
 - **Dual boot**: Sony's UI is untouched; Settings > Switch to Sony's Walkman, and HOME + VOL- for 2 s in Sony's UI to
   come back. If the player ever fails to start, the next boot goes to Sony's UI by itself.
+- **PLAY is the playback key everywhere** (except in games): a tap plays or pauses (or resumes the last thing
+  played), held 3 s it stops and clears the queue. RIGHT opens items in the menus.
 - **USB like Sony's UI**: plug in while the player runs and the Walkman shows up as a drive; eject, unplug, and the
   player continues where it was.
 
@@ -100,7 +102,7 @@ By hand: `firmware/upgpack.py` unpacks the official `NW_WM_FW.UPG`, `firmware/bu
 |---|---|
 | `H:\Music` | Music (any folder structure) |
 | `H:\Audiobooks` | Audiobooks and podcasts, one folder per book or show |
-| `H:\Podcasts` | Optional: more podcast folders, listed under Audiobooks & Pods too |
+| `H:\Podcasts` | Optional: more podcast folders, listed under Pods & Audiobooks too |
 | `H:\Books` | EPUB and TXT books |
 | `H:\Games` | Game Boy games; `Games\GBA`, `Games\NES`, `Games\Doom` (`.wad`) for the others |
 | `H:\HB` | The homebrew itself; `cacert.pem` here enables certificate checks for HTTPS |

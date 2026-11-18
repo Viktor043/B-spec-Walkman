@@ -679,13 +679,15 @@ static int bm_delete(int i)
 	return 1;
 }
 
-static const char *reader_opt_label(int i) { static const char *t[3] = { "Chapters", "Add bookmark", "Bookmarks" }; return i >= 0 && i < 3 ? t[i] : ""; }
+static const char *reader_opt_label(int i) { static const char *t[4] = { "Chapters", "Add bookmark", "Bookmarks", "Turn the page" }; if (i == 3) return ui_book_land ? "Portrait" : "Landscape"; return i >= 0 && i < 4 ? t[i] : ""; }
 
-/* OPTION: chapters / add a bookmark / bookmarks; returns 1 if the position moved (*ch, *off) */
+/* OPTION: chapters / add a bookmark / bookmarks / portrait-landscape; returns 1 if the position moved (*ch, *off),
+ * 2 for a turn of the orientation */
 static int reader_menu(int *ch, long *off, int page)
 {
-	struct list_view mv = { "Options", 3, 0, 0, reader_opt_label, 0, 0, LI_NONE, 0, 0 };
+	struct list_view mv = { "Options", 4, 0, 0, reader_opt_label, 0, 0, LI_NONE, 0, 0 };
 	int s = list_run(&mv);
+	if (s == 3) return 2;
 	if (s == 0) {	/* the chapters, the current one selected */
 		lv_book = &bk;
 		struct list_view cv = { bk.title, bk.nch, cur_ch, 0, chap_label, 0, 0, LI_FOLDER, 0, 0 };
@@ -737,21 +739,7 @@ static void reader_run(const char *path)
 		if (k < 0) continue;
 		int np = npages(), moved = 0;
 		if (k == K_VOLUP || k == K_VOLDN) { volume_key(k); if (!ui_book_land) redraw_strip = 1; continue; }	/* the music's volume */
-		if (k == K_PLAY) {	/* portrait / landscape, at the same place */
-			long here = page * rd_lines() < nlines ? lines[page * rd_lines()].off : 0;
-			{
-				ui_book_land = !ui_book_land;
-				ui_fullscreen = ui_book_land;
-				gfx_rot = ui_book_land ? 0 : saved_rot;
-				gfx_invalidate();
-			}
-			layout(ctext, clen);
-			if (!nlines) add_line(0, 0, 1, 0);
-			page = page_of(here);
-			settings_save();
-			redraw = 1;
-			continue;
-		}
+		if (k == K_PLAY) { play_key(); if (!ui_book_land) redraw_strip = 1; continue; }	/* PLAY: the playback key (2026-11-18) */
 		if (k == K_LEFT || k == K_RIGHT) {	/* the backlight, in its 5 real steps */
 			int b = ui_brightness + (k == K_RIGHT ? 20 : -20);
 			if (b < 20) b = 20;
@@ -770,7 +758,17 @@ static void reader_run(const char *path)
 			moved = 1;
 		} else if (k == K_OPTION) {
 			int nch = cur_ch; long noff = 0;
-			if (reader_menu(&nch, &noff, page)) { load_chapter(nch); page = page_of(noff); moved = 1; }
+			int r = reader_menu(&nch, &noff, page);
+			if (r == 2) {	/* the orientation, at the same place */
+				long here = page * rd_lines() < nlines ? lines[page * rd_lines()].off : 0;
+				ui_book_land = !ui_book_land; ui_fullscreen = ui_book_land;
+				gfx_rot = ui_book_land ? 0 : saved_rot;
+				gfx_invalidate();
+				layout(ctext, clen);
+				if (!nlines) add_line(0, 0, 1, 0);
+				page = page_of(here);
+				settings_save();
+			} else if (r) { load_chapter(nch); page = page_of(noff); moved = 1; }
 			redraw = 1;
 		} else if (k == K_BACK) break;
 		if (moved) { redraw = 1; if (++turns % 5 == 0) pos_put(bk.path, cur_ch, lines[page * rd_lines() < nlines ? page * rd_lines() : 0].off, book_pct(page)); }

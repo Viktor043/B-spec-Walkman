@@ -461,6 +461,7 @@ static int opt_dark, opt_stage;
 #define OPT_HINT 1.5
 #define OPT_POWER 4.0
 static void power_prompt(void);
+static double play_since;	/* PLAY is down since (0 = up) */
 
 static int option_tick(void)	/* while OPTION is held: a hint at 1.5 s, power off at 4 s (no question since 2026-11-18) */
 {
@@ -501,6 +502,7 @@ int getkey(int timeout_ms)
 	}
 	if (e.type != 1) return -1;
 	if (!KEY_PRESSED(e.value)) {
+		if ((e.code & 0x7f) == K_PLAY) play_since = 0;
 		if ((e.code & 0x7f) == K_OPTION && opt_since > 0) return option_released();
 		if ((e.code & 0x7f) == held_code) held_code = -1;
 		if ((e.code & 0x7f) == K_BACK) back_since = 0;
@@ -526,6 +528,7 @@ int getkey(int timeout_ms)
 	if (e.code == K_UP || e.code == K_DOWN || e.code == K_LEFT || e.code == K_RIGHT || e.code == K_VOLUP || e.code == K_VOLDN) { held_code = e.code; held_since = last_repeat = now(); }
 	back_since = e.code == K_BACK ? now() : 0;	/* another key: not a HOME hold */
 	if (e.code == K_OPTION) { opt_since = now(); opt_dark = was_dark; opt_stage = 0; return was_dark ? K_REDRAW : -1; }	/* decided on release */
+	if (e.code == K_PLAY) play_since = now();	/* PLAY held 3 s = stop (play_key) */
 	return was_dark ? K_REDRAW : e.code;
 }
 
@@ -760,7 +763,8 @@ int list_run(struct list_view *v)
 		}
 		else if (k == K_UP) v->sel = v->sel > 0 ? v->sel - 1 : v->n - 1;
 		else if (k == K_DOWN) v->sel = v->sel < v->n - 1 ? v->sel + 1 : 0;
-		else if ((k == K_PLAY || k == K_RIGHT) && v->n) { pending_slide = 1; return v->sel; }	/* RIGHT: forward, like PLAY */
+		else if (k == K_RIGHT && v->n) { pending_slide = 1; return v->sel; }	/* RIGHT opens (2026-11-18: PLAY is the playback key) */
+		else if (k == K_PLAY) play_key();
 		else if (k == K_BACK || k == K_LEFT) { pending_slide = -1; return -1; }	/* LEFT: back */
 		else if (k == K_OPTION && v->option && v->n) { pending_slide = 1; int r = v->option(v->sel); pending_slide = -1; redraw = 1; if (r == 1) return -2; }
 		else if (k == K_BT && !hw_a91x) { pending_slide = 1; bt_menu(); pending_slide = -1; redraw = 1; }
@@ -1033,6 +1037,7 @@ void nowplaying_run(void)
 	 * frames (at least 2 pressed, then a spring stepped at most 35 ms a frame), so a slow frame (a new cover) never
 	 * swallows it; the cover is decoded only after it */
 	int press_btn = 0, press_held = 0, press_frames = 0; double press_phase = 0, press_last = 0;
+	int play_pending = 0; double play_t0 = 0;	/* PLAY went down: a tap toggles on release, 3 s held stops */
 	double t_in = now();	/* the first frame's preparation, for the timing line below */
 	wake();
 	for (;;) {
@@ -1111,8 +1116,10 @@ void nowplaying_run(void)
 			}
 		}
 		if (!backlight_on) full = 1;
+		if (play_pending && !play_down()) { play_pending = 0; press_held = 0; beep(BEEP_ONE); eng_toggle(); full = 1; }
+		else if (play_pending && now() - play_t0 >= 3) { play_pending = 0; press_btn = 0; playback_stop(); pending_slide = -1; return; }
 		idle_tick(0);
-		int k = poll_key(press_btn ? 20 : lr_key >= 0 ? 60 : 500);
+		int k = poll_key(press_btn || play_pending ? 20 : lr_key >= 0 ? 60 : 500);
 		if (lr_key >= 0) {
 			int music = e.mode == ENG_MUSIC, dir = lr_key == K_RIGHT ? 1 : -1;
 			if (held_code != lr_key) {	/* released */
@@ -1147,7 +1154,7 @@ void nowplaying_run(void)
 		}
 		if (ui_theme && browsing && k == K_BACK) { browsing = 0; full = 1; continue; }
 		if (ui_theme && browsing && k == K_PLAY) { if (cursor != e.idx) { beep(BEEP_ONE); eng_play_at(cursor); } else eng_toggle(); browsing = 0; full = 1; continue; }
-		if (k == K_PLAY) { beep(BEEP_ONE); eng_toggle(); press_btn = 2; press_held = 0; press_frames = 0; press_phase = 0; }
+		if (k == K_PLAY) { play_pending = 1; play_t0 = now(); press_btn = 2; press_held = 1; press_frames = 0; press_phase = 0; continue; }
 		else if (k == K_BACK) { ui_scrub_sec = -1; pending_slide = -1; return; }
 		else if (k == K_LEFT || k == K_RIGHT) { lr_key = k; lr_t = now(); scrub = 0; press_btn = k == K_LEFT ? 1 : 3; press_held = 1; press_frames = 0; press_phase = 0; continue; }	/* decided on release / hold */
 		else if (k == K_UP) {
@@ -1688,7 +1695,7 @@ static void games_menu(void)
 		char kind = game_kind[s];
 		const char *bin = kind == 'n' ? HB_BIN "/nes" : kind == 'd' ? HB_BIN "/doom" : kind == 'a' ? HB_BIN "/gba" : HB_BIN "/gnuboy";
 		const char *title = kind == 'n' ? "NES" : kind == 'd' ? "Doom" : kind == 'a' ? "Game Boy Advance" : "Game Boy";
-		if (access(bin, X_OK)) { message(title, "Falta el emulador en H:/HB/bin", ""); msg_wait(3); continue; }
+		if (access(bin, X_OK)) { message(title, "The emulator is missing from H:/HB/bin", ""); msg_wait(3); continue; }
 		int with_music = eng_playing();
 		const char *hint = kind == 'd' ? "PLAY fires · OPTION uses · BT runs · VOL: strafe · BACK: menu, 2 s: quit"
 			: kind == 'n' ? "PLAY = A · OPTION = B · BACK = Start (2 s: quit) · BT = Select"
@@ -1752,6 +1759,8 @@ static void games_menu(void)
 		lg("gnuboy exit status %d", stt);
 		drain_keys();
 		wake();
+		gfx_invalidate();	/* the game drew on the LCD itself: send the whole next frame, not just what changed */
+		force_redraw = 1;
 		pending_slide = 0;
 	}
 }
@@ -1847,6 +1856,27 @@ static int resume_last(void)
 	return eng_active();
 }
 
+/* PLAY on every screen but a game (2026-11-18): the playback key. A tap plays / pauses (nothing loaded: the last
+ * thing played); held 3 s it stops and clears the queue, and the strip goes back to idle. Called when PLAY went down. */
+void play_key(void)
+{
+	double t0 = now();
+	while (play_since > 0 && now() - t0 < 3) poll_key(40);
+	if (play_since > 0) { playback_stop(); while (play_since > 0) poll_key(40); return; }
+	beep(BEEP_ONE);
+	if (eng_active()) eng_toggle();
+	else if (!resume_last()) eng_note("Nothing to play");
+}
+void playback_stop(void)
+{
+	if (!eng_active()) return;
+	lg("PLAY held 3 s: playback stopped");
+	beep(BEEP_THREE);
+	eng_stop();
+	ui_scrub_sec = -1;
+}
+int play_down(void) { return play_since > 0; }
+
 /* ---------- home: 3x3 grid with Sony's zoom/glow animation ---------- */
 
 static int home_frame[HOME_SLOTS];
@@ -1906,6 +1936,7 @@ static void home(void)
 			continue;
 		}
 		int ns = sel;
+		if (ui_theme && k == K_PLAY) { play_key(); redraw = 1; continue; }	/* PLAY: the playback key; RIGHT opens */
 		if (ui_theme && k == K_RIGHT) k = K_PLAY;	/* forward = open the row, as in every list */
 		if (ui_theme && k != K_PLAY && (k == K_UP || k == K_DOWN || k == K_LEFT || k == K_RIGHT)) {	/* SNRGY: a list under two tabs */
 			int pos = 0;
@@ -1928,7 +1959,7 @@ static void home(void)
 			pending_slide = 1;
 			switch (ui_theme && ui_home_tab == 2 ? 3 : sel) {	/* the RESUME tab = "Now playing" */
 			case 0: focus_menu(); break;
-			case 1: browse("/contents/Audiobooks", "Audiobooks & Pods", 0); break;
+			case 1: browse("/contents/Audiobooks", "Pods & Audiobooks", 0); break;
 			case 2: browse("/contents/Podcasts", "Podcasts", 1); break;
 			case 3: if (eng_active() || resume_last()) nowplaying_run(); else { pending_slide = 0; eng_note("Nothing is playing"); } break;
 			case 4: music_menu(); break;

@@ -72,6 +72,9 @@ static void poll_keys(void)
 		int pressed = k.value == 0;	/* Sony driver: 0 = pressed, 1 = released */
 		int code = k.code & 0x7f;	/* +0x80 while HOLD is on: ignore the lock in-game */
 		if (code == 15) continue;	/* HOLD switch */
+		/* the picture is turned clockwise (the Walkman held sideways, d-pad under the right thumb): the d-pad turns
+		 * with it, like gnuboy's rotated mode: physical UP points left, RIGHT up, DOWN right, LEFT down (2026-11-18) */
+		if (code == 3) code = 2; else if (code == 1) code = 3; else if (code == 4) code = 1; else if (code == 2) code = 4;
 		switch (code) {
 		case 3: push(pressed, KEY_UPARROW); break;
 		case 4: push(pressed, KEY_DOWNARROW); break;

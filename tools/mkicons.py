@@ -36,10 +36,16 @@ def make(kind):
     elif kind == 'books':  # a closed book with a bookmark ribbon
         d.rounded_rectangle([P(4, 2), P(18, 20)], radius=1.5 * k, outline=c, width=w); d.line([P(7, 2.5), P(7, 19.5)], fill=c, width=w)
         d.polygon([P(12, 2), P(16, 2), P(16, 10), P(14, 8), P(12, 10)], fill=c)
-    elif kind == 'tools':  # a wrench
-        d.line([P(5, 17), P(13.5, 8.5)], fill=c, width=int(2.6 * k))
-        d.arc([P(11, 2), P(20, 11)], 120, 400, fill=c, width=w)
-        d.ellipse([P(3, 15), P(7, 19)], fill=c)
+    elif kind == 'tools':  # a classic open-end wrench: diagonal handle, round head with a slot opening to the top right
+        import math
+        d.line([P(4.2, 17.8), P(13, 9)], fill=c, width=int(3.4 * k))
+        d.ellipse([P(2.4, 16), P(6, 19.6)], fill=c)                      # rounded end of the handle
+        cx, cy, r = 15.2, 6.8, 5.0
+        d.ellipse([P(cx - r, cy - r), P(cx + r, cy + r)], fill=c)        # the head
+        ux, uy, px, py, hw = 1 / math.sqrt(2), -1 / math.sqrt(2), 1 / math.sqrt(2), 1 / math.sqrt(2), 1.7
+        slot = [(cx + ux * a2 + px * s2, cy + uy * a2 + py * s2) for a2, s2 in ((0.4, -hw), (7, -hw), (7, hw), (0.4, hw))]
+        d.polygon([P(*q) for q in slot], fill=0)                          # the jaw opening
+        d.ellipse([P(cx - hw, cy - hw), P(cx + hw, cy + hw)], fill=0)    # its rounded bottom
     elif kind == 'listdown':  # three list lines and a small arrow pointing down: "there is a list below"
         for yy in (5, 10, 15): d.line([P(2, yy), P(12, yy)], fill=c, width=w)
         d.line([P(17, 3), P(17, 15)], fill=c, width=w); d.line([P(13.5, 12), P(17, 16), P(20.5, 12)], fill=c, width=w, joint='curve')

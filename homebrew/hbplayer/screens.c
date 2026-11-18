@@ -188,7 +188,7 @@ struct ui_status ui_st = { -1, 0, 0, 0, 0, 0, 0 };
 #define T_POWEROFF 17, 7	/* 240x320 POWER OFF */
 #define T_RING 17, 17		/* 240x260 blue ring */
 
-const char *const home_labels[HOME_SLOTS] = { "Focus", "Audiobooks & Pods", "Podcasts", "Now playing", "Music", "Games", "Bluetooth", "Power", "Settings" };	/* Music in the centre, like Sony */
+const char *const home_labels[HOME_SLOTS] = { "Focus", "Pods & Audiobooks", "Podcasts", "Now playing", "Music", "Games", "Bluetooth", "Power", "Settings" };	/* Music in the centre, like Sony */
 /* icon per slot: >= 100 -> Sony's own animation (first frame index - 100), else our ICON_*, -1 empty */
 static int home_src[HOME_SLOTS] = { ICON_LOTUS, ICON_BOOK, 100 + 45, 100 + 27, 100 + 54, ICON_GAMEPAD, 100 + 72, ICON_POWER, 100 + 9 };
 static const int home_src_intl[HOME_SLOTS] = { ICON_LOTUS, ICON_BOOK, ICON_MIC, ICON_PLAY, 100 + 55, ICON_GAMEPAD, 100 + 37, ICON_POWER, 100 + 18 };
