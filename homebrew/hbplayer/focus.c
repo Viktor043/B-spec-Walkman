@@ -60,6 +60,8 @@ static inline int pink(void)
 static const int dur_opts[] = { 5, 10, 15, 20, 25, 30, 45, 60, 90 };
 static const int int_opts[] = { 0, 1, 2, 5, 10, 15 };
 static const char *noise_names[] = { "silence", "white noise", "pink noise", "brown noise" };
+static char (*focus_ol)[40];
+static const char *focus_opt_label(int i) { return focus_ol[i]; }
 static int di = 4, ii = 3, ni = 3;	/* defaults: 25 min, bell every 5 min, brown noise */
 #define NDUR (int)(sizeof dur_opts / sizeof dur_opts[0])
 #define NINT (int)(sizeof int_opts / sizeof int_opts[0])
@@ -88,6 +90,25 @@ static void run_session(void)
 		if (k == K_BACK) break;
 		if (k == K_REDRAW) lastsec = -1;
 		if (k == K_PLAY) { paused = !paused; lastsec = -1; }
+		if (k == K_OPTION) {	/* the session's options: its background sound, pause, end (2026-11-18) */
+			static char ol[3][40];
+			int end_now = 0;
+			struct list_view ov = { "Focus", 3, 0, 0, 0, 0, 0, LI_NONE, 0, 0 };
+			ov.label = focus_opt_label;
+			for (;;) {
+				snprintf(ol[0], 40, "Background: %s", noise_names[ni]);
+				snprintf(ol[1], 40, "%s", paused ? "Resume" : "Pause");
+				snprintf(ol[2], 40, "End session");
+				focus_ol = ol;
+				int s = list_run(&ov);
+				if (s == 0) { ni = (ni + 1) % 4; settings_save(); ov.sel = 0; continue; }
+				if (s == 1) paused = !paused;
+				if (s == 2) end_now = 1;
+				break;
+			}
+			lastsec = -1;
+			if (end_now) break;	/* the normal end of the loop below (audio stopped there) */
+		}
 		if (k == K_VOLUP) { if (volume < VOLMAX) volume++; aout_set_volume(); show_volume(); }
 		if (k == K_VOLDN) { if (volume > 0) volume--; aout_set_volume(); show_volume(); }
 		if (popup_expired()) lastsec = -1;

@@ -25,6 +25,8 @@ static double apply(double a, char op, double b, int *err)
 	return b;
 }
 
+static const char *calc_opt_label(int i) { return i == 0 ? "Clear" : "Close calculator"; }
+
 void calc_run(void)
 {
 	char ent[32] = "0", expr[48] = "";
@@ -47,6 +49,13 @@ void calc_run(void)
 		if (k == K_DOWN) { sel = (sel + CALC_COLS) % (CALC_ROWS * CALC_COLS); continue; }
 		if (k == K_LEFT) { sel = sel % CALC_COLS ? sel - 1 : sel + CALC_COLS - 1; continue; }
 		if (k == K_RIGHT) { sel = sel % CALC_COLS < CALC_COLS - 1 ? sel + 1 : sel - CALC_COLS + 1; continue; }
+		if (k == K_OPTION) {	/* clear, or leave (2026-11-18) */
+			struct list_view ov = { "Calculator", 2, 0, 0, calc_opt_label, 0, 0, LI_NONE, 0, 0 };
+			int s = list_run(&ov);
+			if (s == 1) return;
+			if (s == 0) { err = 0; strcpy(ent, "0"); acc = 0; op = 0; fresh = 1; expr[0] = 0; }
+			continue;
+		}
 		if (k != K_PLAY) { volume_key(k); continue; }
 		const char *key = calc_keys[sel];
 		if (err) { err = 0; strcpy(ent, "0"); acc = 0; op = 0; fresh = 1; expr[0] = 0; if (key[0] == 'C') continue; }

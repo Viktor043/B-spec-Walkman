@@ -81,6 +81,69 @@ static int decode_stb(const unsigned char *data, size_t n, uint16_t *dst, int si
 	return 1;
 }
 
+/* a picture fitted into maxw x maxh keeping its shape (the reader's cover page, 2026-11-18): JPEG through TJpgDec at
+ * 1/1..1/8 (little RAM), else stb_image (PNG, progressive JPEG; up to ~2.4 Mpx). dst gets *ow x *oh pixels, a box
+ * filter of the source; 1 on success */
+static void fit_dims(int w, int h, int maxw, int maxh, int *ow, int *oh)
+{
+	if ((long)w * maxh > (long)h * maxw) { *ow = maxw; *oh = (int)((long)h * maxw / w); }
+	else { *oh = maxh; *ow = (int)((long)w * maxh / h); }
+	if (*ow < 1) *ow = 1;
+	if (*oh < 1) *oh = 1;
+}
+int image_fit(const unsigned char *data, size_t n, uint16_t *dst, int maxw, int maxh, int *ow, int *oh)
+{
+	static uint32_t pool[16384 / 4];
+	JDEC jd;
+	struct src s = { data, n, 0, 0, 0, 0, 0 };
+	if (jd_prepare(&jd, in_fn, pool, sizeof pool, &s) == JDR_OK) {
+		int scale = 0;
+		while (scale < 3 && (int)(jd.width >> (scale + 1)) >= maxw && (int)(jd.height >> (scale + 1)) >= maxh) scale++;
+		s.ow = jd.width >> scale; s.oh = jd.height >> scale;
+		if (s.ow <= 0 || s.oh <= 0 || (long)s.ow * s.oh > 900000) return 0;
+		s.out = calloc((size_t)s.ow * s.oh, 2);
+		if (!s.out) return 0;
+		if (jd_decomp(&jd, out_fn, scale) != JDR_OK) { free(s.out); return 0; }
+		fit_dims(s.ow, s.oh, maxw, maxh, ow, oh);
+		for (int y = 0; y < *oh; y++) for (int x = 0; x < *ow; x++) {
+			int sx0 = x * s.ow / *ow, sx1 = (x + 1) * s.ow / *ow, sy0 = y * s.oh / *oh, sy1 = (y + 1) * s.oh / *oh;
+			if (sx1 <= sx0) sx1 = sx0 + 1;
+			if (sy1 <= sy0) sy1 = sy0 + 1;
+			int r = 0, g = 0, b = 0, c = 0;
+			for (int yy = sy0; yy < sy1; yy += (sy1 - sy0 + 2) / 3)
+				for (int xx = sx0; xx < sx1; xx += (sx1 - sx0 + 2) / 3) {
+					uint16_t v = s.out[yy * s.ow + xx];
+					r += v >> 11; g += (v >> 5) & 63; b += v & 31; c++;
+				}
+			dst[y * *ow + x] = (uint16_t)((r / c) << 11 | (g / c) << 5 | (b / c));
+		}
+		free(s.out);
+		return 1;
+	}
+	int w, h, comp;
+	if (!stbi_info_from_memory(data, (int)n, &w, &h, &comp) || w <= 0 || h <= 0 || (long)w * h > 2400000) return 0;
+	unsigned char *px = stbi_load_from_memory(data, (int)n, &w, &h, &comp, 3);
+	if (!px) return 0;
+	fit_dims(w, h, maxw, maxh, ow, oh);
+	for (int y = 0; y < *oh; y++) {
+		if (!(y & 15)) hb_alive();
+		for (int x = 0; x < *ow; x++) {
+			int sx0 = x * w / *ow, sx1 = (x + 1) * w / *ow, sy0 = y * h / *oh, sy1 = (y + 1) * h / *oh;
+			if (sx1 <= sx0) sx1 = sx0 + 1;
+			if (sy1 <= sy0) sy1 = sy0 + 1;
+			int r = 0, g = 0, b = 0, c = 0;
+			for (int yy = sy0; yy < sy1; yy += (sy1 - sy0 + 2) / 3)
+				for (int xx = sx0; xx < sx1; xx += (sx1 - sx0 + 2) / 3) {
+					const unsigned char *q = px + ((size_t)yy * w + xx) * 3;
+					r += q[0]; g += q[1]; b += q[2]; c++;
+				}
+			dst[y * *ow + x] = RGB(r / c, g / c, b / c);
+		}
+	}
+	stbi_image_free(px);
+	return 1;
+}
+
 /* decode JPEG data into a size x size RGB565 square (centre crop); 1 on success */
 static int decode(const unsigned char *data, size_t n, uint16_t *dst, int size)
 {

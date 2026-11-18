@@ -969,7 +969,7 @@ static int list_dir(const char *root, int dirs, const char *ext, int desc)
 
 /* ---------- now playing ---------- */
 
-static char opt_items[5][40];
+static char opt_items[6][40];
 static const char *opt_label(int i) { return opt_items[i]; }
 static const char *repeat_names[] = { "off", "all", "one" };
 
@@ -989,11 +989,13 @@ static void chapters_menu(void)
 	if (s >= 0) eng_seek_to(chap_start(s));
 }
 
-static void play_options(int music)
+static void play_options(int music, int *lyrics)	/* lyrics: the .lrc view on/off (0 = the song has none) */
 {
 	struct list_view v = { "Options", 0, 0, 0, opt_label, 0, 0, LI_NONE, 0, 0 };
 	for (;;) {
-		int snd = music ? 3 : 2 + (chap_count() > 0);	/* the last row: the quick sound menu */
+		int snd = music ? 3 : 2 + (chap_count() > 0);	/* then Lyrics (a song with a .lrc), then the quick sound menu */
+		int lyr = lyrics && lrc_count() ? snd : -1;
+		if (lyr >= 0) { snprintf(opt_items[snd], 40, "Lyrics: %s", *lyrics ? "on" : "off"); snd++; }
 		v.n = snd + 1;
 		snprintf(opt_items[snd], 40, "Sound");
 		int m = eng_sleep_left();
@@ -1007,6 +1009,7 @@ static void play_options(int music)
 		if (s < 0) return;
 		pending_slide = 0;
 		if (s == snd) { pending_slide = 1; sound_quick_menu(0); pending_slide = -1; continue; }
+		if (s == lyr) { *lyrics = !*lyrics; continue; }
 		if (s == 0) { int cur = eng_sleep_min; eng_set_sleep(cur >= 60 ? 0 : cur + 15); }
 		else if (s == 1 && music) { eng_shuffle = !eng_shuffle; pos_dirty = 1; }
 		else if (s == 1) { static const int sp[] = { 100, 125, 150, 200, 75 }; int i = 0; while (i < 5 && sp[i] != eng_speed) i++; eng_speed = sp[(i + 1) % 5]; pos_dirty = 1; }
@@ -1168,7 +1171,7 @@ void nowplaying_run(void)
 			else if (chap_count() && chap_index(e.sec) + 1 < chap_count()) eng_seek_to(chap_start(chap_index(e.sec) + 1));
 			else eng_next();
 		}
-		else if (k == K_OPTION) { pending_slide = 1; play_options(music); pending_slide = -1; full = 1; }
+		else if (k == K_OPTION) { pending_slide = 1; play_options(music, &show_lrc); pending_slide = -1; last_lidx = -2; full = 1; }
 		else change_volume(k);
 		full = 1;
 	}

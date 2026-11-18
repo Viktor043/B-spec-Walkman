@@ -26,7 +26,7 @@ int ui_book_size = 1, ui_book_land;	/* saved in pos.txt: the zoom (face 2's size
 #define CHARS_PER_MIN 1100		/* reading speed for the time left (~200 words a minute) */
 
 struct chap { char href[256]; char name[96]; long size; };
-struct book { char path[PATHLEN]; char title[128], author[96]; int epub, nch; struct chap *ch; long total; char *txt; long txtlen; };
+struct book { char path[PATHLEN]; char title[128], author[96]; int epub, nch; struct chap *ch; long total; char *txt; long txtlen; char cover[256]; };
 
 /* ---------------- zip ---------------- */
 
@@ -321,6 +321,35 @@ static int open_epub(struct book *b)
 			break;
 		}
 	}
+	/* the cover image: EPUB 3 properties="cover-image", else EPUB 2 <meta name="cover" content="id">, else the first
+	 * picture of the first section (the cover page) */
+	for (const char *it = o; !b->cover[0] && (it = strstr(it, "<item ")); it++) {
+		char pr[96], hr[256];
+		if (attr(it, "properties", pr, sizeof pr) && strstr(pr, "cover-image") && attr(it, "href", hr, sizeof hr)) resolve(dir, hr, b->cover, sizeof b->cover);
+	}
+	for (const char *m = o; !b->cover[0] && (m = strstr(m, "<meta ")); m++) {
+		char nm[32], cid[96];
+		if (!attr(m, "name", nm, sizeof nm) || strcmp(nm, "cover") || !attr(m, "content", cid, sizeof cid)) continue;
+		for (const char *it = o; (it = strstr(it, "<item ")); it++) {
+			char id[96], hr[256], mt[64] = "";
+			attr(it, "media-type", mt, sizeof mt);
+			if (attr(it, "id", id, sizeof id) && !strcmp(id, cid) && strstr(mt, "image") && attr(it, "href", hr, sizeof hr)) { resolve(dir, hr, b->cover, sizeof b->cover); break; }
+		}
+	}
+	if (!b->cover[0] && b->nch) {
+		long hl; char *h = zip_read(b->ch[0].href, &hl);
+		const char *im = h ? strstr(h, "<img") : 0, *sv = h ? strstr(h, "<image") : 0;
+		char src[256] = "";
+		if (im) attr(im, "src", src, sizeof src);
+		if (!src[0] && sv && !attr(sv, "xlink:href", src, sizeof src)) attr(sv, "href", src, sizeof src);
+		if (src[0]) {
+			char cdir[256]; snprintf(cdir, sizeof cdir, "%s", b->ch[0].href);
+			char *cs = strrchr(cdir, '/'); if (cs) cs[1] = 0; else cdir[0] = 0;
+			resolve(cdir, src, b->cover, sizeof b->cover);
+		}
+		free(h);
+	}
+	if (b->cover[0] && !zip_find(b->cover)) b->cover[0] = 0;
 	free(o);
 	/* chapter names from the table of contents: EPUB 3 nav, else the NCX */
 	const char *tocf = navdoc[0] ? navdoc : toc;
@@ -665,6 +694,40 @@ static void draw_page(int page)
 }
 
 #ifndef READER_SHOT
+/* the cover page (2026-11-18): the EPUB's cover picture, fitted to the page with its shape kept, before the first page
+ * of text. Decoded once per orientation. */
+static uint16_t cov_px[304 * 258];
+static int cov_w, cov_h, cov_land = -1;
+static int cover_ready(void)
+{
+	if (!bk.cover[0]) return 0;
+	if (cov_land == ui_book_land) return cov_w > 0;
+	cov_land = ui_book_land; cov_w = cov_h = 0;
+	long n; char *d = zip_read(bk.cover, &n);
+	if (!d) return 0;
+	int mw = ui_book_land ? H - 16 : W - 16, mh = ui_book_land ? W - 16 : BOTTOM_Y - 16;	/* 8 px of paper around it */
+	if (!image_fit((const unsigned char *)d, (size_t)n, cov_px, mw, mh, &cov_w, &cov_h)) cov_w = cov_h = 0;
+	free(d);
+	if (!cov_w) lg("reader: cover %s not decoded", bk.cover);
+	return cov_w > 0;
+}
+static void draw_cover(void)
+{
+	static char l2[200];
+	if (ui_book_land) {	/* logical 320 x 240, drawn turned clockwise like the text: (x, y) -> (W - 1 - y, x) */
+		gfx_fill(0, 0, W, H, scr_paper());
+		int x0 = (H - cov_w) / 2, y0 = (W - cov_h) / 2;
+		for (int y = 0; y < cov_h; y++) for (int x = 0; x < cov_w; x++) fb[(x0 + x) * W + (W - 1 - (y0 + y))] = cov_px[y * cov_w + x];
+		return;
+	}
+	scr_page(bk.title);
+	int x0 = (W - cov_w) / 2, y0 = (BOTTOM_Y - cov_h) / 2;
+	for (int y = 0; y < cov_h; y++) memcpy(fb + (y0 + y) * W + x0, cov_px + y * cov_w, cov_w * 2);
+	snprintf(l2, sizeof l2, "%s%s%s", bk.title, bk.author[0] ? " - " : "", bk.author);
+	ui_st.rd_on = 1; ui_st.rd_l1 = "COVER"; ui_st.rd_l2 = l2; ui_st.rd_left = ""; ui_st.rd_pct = 0;
+	scr_page_status("COVER");
+}
+
 static struct book *lv_book;
 static const char *chap_label(int i)
 {
@@ -691,15 +754,36 @@ static int bm_delete(int i)
 	return 1;
 }
 
-static const char *reader_opt_label(int i) { static const char *t[4] = { "Chapters", "Add bookmark", "Bookmarks", "Turn the page" }; if (i == 3) return ui_book_land ? "Portrait" : "Landscape"; return i >= 0 && i < 4 ? t[i] : ""; }
+static const char *reader_opt_label(int i)
+{
+	static char b[48];
+	static const char *const sz[4] = { "small", "medium", "large", "extra large" };
+	switch (i) {
+	case 0: return "Chapters";
+	case 1: return "Add bookmark";
+	case 2: return "Bookmarks";
+	case 3: snprintf(b, sizeof b, "Text size: %s", sz[ui_book_size < 0 ? 0 : ui_book_size > 3 ? 3 : ui_book_size]); return b;
+	case 4: snprintf(b, sizeof b, "Brightness: %d%%", ui_brightness); return b;
+	case 5: return ui_book_land ? "Orientation: landscape" : "Orientation: portrait";
+	}
+	return "";
+}
 
-/* OPTION: chapters / add a bookmark / bookmarks / portrait-landscape; returns 1 if the position moved (*ch, *off),
- * 2 for a turn of the orientation */
+/* OPTION: chapters, bookmarks, text size, brightness, orientation. Returns 1 if the position moved (*ch, *off), 2 for a
+ * turn of the orientation, 3 when the text size changed (lay the chapter out again); size and brightness change in
+ * place (the menu stays) */
 static int reader_menu(int *ch, long *off, int page)
 {
-	struct list_view mv = { "Options", 4, 0, 0, reader_opt_label, 0, 0, LI_NONE, 0, 0 };
-	int s = list_run(&mv);
-	if (s == 3) return 2;
+	struct list_view mv = { "Options", 6, 0, 0, reader_opt_label, 0, 0, LI_NONE, 0, 0 };
+	int resized = 0, s;
+	for (;;) {
+		s = list_run(&mv);
+		if (s == 3) { int n = gfx_book_sizes() < 4 ? gfx_book_sizes() : 4; ui_book_size = (ui_book_size + 1) % (n > 0 ? n : 1); settings_save(); resized = 1; mv.sel = 3; continue; }
+		if (s == 4) { ui_brightness = ui_brightness >= 100 ? 20 : ui_brightness + 20; gfx_backlight(ui_brightness); settings_save(); mv.sel = 4; continue; }
+		break;
+	}
+	if (s == 5) return 2;
+	if (s < 0) return resized ? 3 : 0;
 	if (s == 0) {	/* the chapters, the current one selected */
 		lv_book = &bk;
 		struct list_view cv = { bk.title, bk.nch, cur_ch, 0, chap_label, 0, 0, LI_FOLDER, 0, 0 };
@@ -737,15 +821,19 @@ static void reader_run(const char *path)
 	struct mark *m = pos_of(path);
 	int ch = m && m->ch < bk.nch ? m->ch : 0;
 	long off = m ? m->off : 0;
-	load_text_chapter(ch, 1);	/* a fresh book opens on its first page with text, not the cover image */
+	int fresh = !m || (m->ch == 0 && m->off == 0);
+	load_text_chapter(ch, 1);	/* image-only sections (the cover page) are skipped: the cover is shown on its own */
 	if (cur_ch != ch) off = 0;
 	int page = page_of(off), redraw = 1, turns = 0, saved_rot = gfx_rot;
+	int first_text = cur_ch;	/* the section the cover page leads to */
+	cov_land = -1;
+	int on_cover = fresh && cover_ready();	/* a book opened for the first time starts on its cover */
 	ui_keep_awake = 1;	/* the screen stays on while a book is open */
 	if (ui_book_land) { ui_fullscreen = 1; gfx_rot = 0; gfx_invalidate(); }
 	int redraw_strip = 0;
 	for (;;) {
 		if (popup_expired() && redraw_strip) { redraw_strip = 0; redraw = 1; }	/* the volume shown in the strip: the reading lines again */
-		if (redraw && backlight_on) { draw_page(page); flip(); redraw = 0; }
+		if (redraw && backlight_on) { if (on_cover && cover_ready()) draw_cover(); else { on_cover = 0; draw_page(page); } flip(); redraw = 0; }
 		idle_tick(0);
 		int k = getkey(1000);
 		if (k == K_REDRAW) { redraw = 1; continue; }
@@ -765,10 +853,16 @@ static void reader_run(const char *path)
 			if (!ui_book_land) { char n[32]; snprintf(n, sizeof n, "Brightness %d%%", ui_brightness); eng_note(n); redraw_strip = 1; }
 			continue;
 		}
+		if (on_cover && (k == K_DOWN || k == K_UP)) {	/* from the cover: DOWN opens the text, UP stays */
+			if (k == K_DOWN) { on_cover = 0; redraw = 1; }
+			continue;
+		}
 		if (k == K_DOWN) {
 			if (page + 1 < np) page++;
 			else if (cur_ch + 1 < bk.nch) { load_text_chapter(cur_ch + 1, 1); page = 0; }
 			moved = 1;
+		} else if (k == K_UP && page == 0 && cur_ch == first_text && cover_ready()) {	/* before the first page: the cover */
+			on_cover = 1; redraw = 1;
 		} else if (k == K_UP) {
 			if (page > 0) page--;
 			else if (cur_ch > 0) { int was = cur_ch; load_text_chapter(cur_ch - 1, -1); if (ctext_blank()) load_chapter(was); page = npages() - 1; }
@@ -776,7 +870,12 @@ static void reader_run(const char *path)
 		} else if (k == K_OPTION) {
 			int nch = cur_ch; long noff = 0;
 			int r = reader_menu(&nch, &noff, page);
-			if (r == 2) {	/* the orientation, at the same place */
+			if (r == 3) {	/* a new text size: the same place, laid out again */
+				long here = page * rd_lines() < nlines ? lines[page * rd_lines()].off : 0;
+				layout(ctext, clen);
+				if (!nlines) add_line(0, 0, 1, 0);
+				page = page_of(here);
+			} else if (r == 2) {	/* the orientation, at the same place */
 				long here = page * rd_lines() < nlines ? lines[page * rd_lines()].off : 0;
 				ui_book_land = !ui_book_land; ui_fullscreen = ui_book_land;
 				gfx_rot = ui_book_land ? 0 : saved_rot;
@@ -785,7 +884,7 @@ static void reader_run(const char *path)
 				if (!nlines) add_line(0, 0, 1, 0);
 				page = page_of(here);
 				settings_save();
-			} else if (r) { load_text_chapter(nch, 1); page = cur_ch == nch ? page_of(noff) : 0; moved = 1; }
+			} else if (r) { load_text_chapter(nch, 1); page = cur_ch == nch ? page_of(noff) : 0; on_cover = 0; moved = 1; }
 			redraw = 1;
 		} else if (k == K_BACK) break;
 		if (moved) { redraw = 1; if (++turns % 5 == 0) pos_put(bk.path, cur_ch, lines[page * rd_lines() < nlines ? page * rd_lines() : 0].off, book_pct(page)); }

@@ -209,6 +209,7 @@ int cover_known(const char *path, int size);	/* something is cached for it (no r
 int cover_cached(const char *path, uint16_t *dst, int size);	/* cache only, instant */
 extern void (*cover_tick)(void);	/* called while decoding, to keep the audio fed */
 extern int (*cover_cancel)(void);	/* optional: returns 1 to give up (a key came); then cover_aborted() is 1 */
+int image_fit(const unsigned char *data, size_t n, uint16_t *dst, int maxw, int maxh, int *ow, int *oh);	/* a picture fitted, shape kept */
 int cover_aborted(void);	/* the last cover_load gave up: nothing remembered, try again later */
 int key_waiting(void);	/* a key event is queued (not consumed) */
 

@@ -110,6 +110,16 @@ int main(int argc, char **argv)
 	if (argc > 4 && !strcmp(argv[4], "en")) { ui_lang_set(1); gfx_tr = check_tr; }
 	if (argc > 5) ui_theme_set(atoi(argv[5]));	/* look: 0 Sony, 1 SNRGY silver, 2 SNRGY black */
 	ui_st.batt = 72;
+	if (getenv("COVERTEST")) {	/* image_fit on a file: the reader's cover page sizes */
+		FILE *f = fopen(getenv("COVERTEST"), "rb"); static unsigned char d[4 << 20]; size_t n = f ? fread(d, 1, sizeof d, f) : 0; if (f) fclose(f);
+		static uint16_t px[304 * 258]; int w = 0, h = 0;
+		int ok = image_fit(d, n, px, W - 16, 274 - 16, &w, &h);
+		printf("fit %d -> %dx%d\n", ok, w, h);
+		for (int i = 0; i < W * H; i++) fb[i] = 0xEF3B;
+		for (int y = 0; y < h; y++) memcpy(fb + (8 + y) * W + (W - w) / 2, px + y * w, w * 2);
+		save("cover_test");
+		return 0;
+	}
 	if (getenv("MEASURE")) {	/* widths of fixed texts (layout checks) */
 		const char *t[] = { "17.11.2026", "23:59", "up/down: change", "left/right: day, month, year, hour, min", "PLAY: save", "NW-A91x homebrew", "NWZ-A820 homebrew", "Version 1.1", "2026-11-18", "Free: 23,4 GB", "Settings: 512,3 MB", "License: GPL-2.0", "libmad · FAAD2 · lwIP · Sonic", "gnuboy · Mbed TLS · TJpgDec", "left/right: h / min" };
 		for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) printf("%3d %3d  %s\n", gfx_text_w(t[i], 1), gfx_text_w(t[i], 2), t[i]);
