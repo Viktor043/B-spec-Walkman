@@ -7,6 +7,7 @@ import glob, os, re, subprocess
 IGNORE = {
     'CAPÍTULO', 'Capítulo', 'CAPITULO', 'Capitulo',	# reader.c: chapter lines in Spanish books (data)
     'Game Boy', 'Game Boy Advance', 'Bluetooth', 'Podcast', 'Podcasts', 'DSP', 'NES', 'GBA', 'Doom',
+    'sin', 'cos', 'tan', 'ln', 'log', 'Ans', 'EXP', 'DEG',	# calculator keys
     'Info', 'Hold', 'Preset', 'Crossfeed', 'OK', 'Heavy', 'Pop', 'Jazz', 'Español', 'English', 'Idioma / Language',
     'Argentina', 'Chile', 'Colombia', 'Uruguay', 'México', 'España', 'Brasil', 'Estados Unidos', 'Reino Unido',
     'canciones', 'canción', 'episodio', 'episodios', 'una', 'todo', 'Máxima batería off',	# pieces of composed texts

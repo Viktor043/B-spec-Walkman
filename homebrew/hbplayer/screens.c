@@ -1210,33 +1210,75 @@ int scr_message(const char *title, const char *l1, const char *l2)
 	return y;
 }
 
-const char *const calc_keys[CALC_ROWS * CALC_COLS] = {
-	"C", "+/-", "%", "/",
-	"7", "8", "9", "x",
+const char *const calc_keys_basic[20] = {
+	"C", "±", "%", "÷",
+	"7", "8", "9", "×",
 	"4", "5", "6", "-",
 	"1", "2", "3", "+",
 	"0", ".", "DEL", "=",
 };
+const char *const calc_keys_sci[35] = {
+	"sin", "cos", "tan", "ln", "log",
+	"x²", "√", "x^y", "1/x", "π",
+	"C", "±", "%", "DEL", "÷",
+	"7", "8", "9", "e", "×",
+	"4", "5", "6", "n!", "-",
+	"1", "2", "3", "Ans", "+",
+	"0", ".", "DEG", "EXP", "=",
+};
+static int calc_is_op(const char *k) { return !strcmp(k, "÷") || !strcmp(k, "×") || !strcmp(k, "-") || !strcmp(k, "+") || !strcmp(k, "x^y"); }
+static void aa_line(float x0, float y0, float x1, float y1, float t, uint16_t c)	/* a stroke as two triangles */
+{
+	float dx = x1 - x0, dy = y1 - y0, l = sqrtf(dx * dx + dy * dy);
+	if (l <= 0) return;
+	float nx = -dy / l * t / 2, ny = dx / l * t / 2;
+	aa_draw((struct aa_shape){ 2, x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny }, c);
+	aa_draw((struct aa_shape){ 2, x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny }, c);
+}
+static int calc_is_fn(const char *k) { return strlen(k) > 1 && !calc_is_op(k) && strcmp(k, "DEL") && strcmp(k, "±"); }
+static void text_bold_center(int cx, int y, const char *s, uint16_t c)	/* faux bold: twice, 1 px apart */
+{
+	int w = gfx_text_w(s, 1), x = cx - w / 2;
+	gfx_text(x, y, s, c, 1); gfx_text(x + 1, y, s, c, 1);
+}
 
-/* Calculator: the expression and the number on top (right-aligned, the number at twice the size when it fits),
- * then the keys as rounded cells; operators in red, the cursor a filled white cell */
+/* Calculator (2026-11-18 look): the expression and the number on top, right-aligned; rounded key cells, labels in
+ * faux bold; operators red, "=" an orange key with white text (darker when selected), the cursor a filled ink cell.
+ * Scientific: 5 x 7 keys, the functions in grey, smaller number. */
 void scr_calc(const struct calc_view *v)
 {
-	scr_screen("Calculator");
-	const uint16_t red = SNRGY ? RGB(0xE2, 0x06, 0x13) : C_ORANGE;
-	gfx_text(W - 10 - gfx_text_w(v->expr, 1), 34, v->expr, C_GREY, 1);
-	int sc = gfx_text_w(v->value, 2) <= W - 20 ? 2 : 1;
-	gfx_text(W - 10 - gfx_text_w(v->value, sc), sc == 2 ? 56 : 66, v->value, C_WHITE, sc);
-	int gy = 106, gh = BOTTOM_Y - 4 - gy, ch = gh / CALC_ROWS, cw = (W - 8) / CALC_COLS;
-	for (int i = 0; i < CALC_ROWS * CALC_COLS; i++) {
-		int x = 4 + (i % CALC_COLS) * cw, y = gy + (i / CALC_COLS) * ch;
-		const char *k = calc_keys[i];
-		int is_op = i % CALC_COLS == CALC_COLS - 1 || i < CALC_COLS;
-		if (i == v->sel) rrect(x + 2, y + 2, cw - 4, ch - 4, 6, C_WHITE, 1);
-		else rrect(x + 2, y + 2, cw - 4, ch - 4, 6, SNRGY ? th_surf : C_SURF, 1);
-		uint16_t c = i == v->sel ? C_BLACK : is_op ? red : C_WHITE;
-		gfx_text_center(x + cw / 2, y + (ch - LINE_H) / 2 + 1, k, c, 1);
+	scr_screen(v->sci ? "Scientific" : "Calculator");
+	const uint16_t red = SNRGY ? RGB(0xE2, 0x06, 0x13) : C_ORANGE, orange = RGB(0xF2, 0x84, 0x1E), orange_dk = RGB(0xC4, 0x5E, 0x08);
+	int rows = v->sci ? 7 : 5, cols = v->sci ? 5 : 4;
+	const char *const *keys = v->sci ? calc_keys_sci : calc_keys_basic;
+	int ey = v->sci ? 30 : 34;
+	gfx_text(W - 12 - gfx_text_w(v->expr, 1), ey, v->expr, C_GREY, 1);
+	if (v->sci) gfx_text(12, ey, v->deg ? "DEG" : "RAD", C_GREY, 1);
+	int sc = gfx_text_w(v->value, 2) <= W - 24 ? 2 : 1, vy = v->sci ? (sc == 2 ? 50 : 58) : (sc == 2 ? 56 : 66);
+	gfx_text(W - 12 - gfx_text_w(v->value, sc), vy, v->value, C_WHITE, sc);
+	int gy = v->sci ? 92 : 106, gh = BOTTOM_Y - 4 - gy, ch = gh / rows, cw = (W - 8) / cols;
+	int caps = gfx_caps;
+	gfx_caps = 0;	/* key labels keep their case: e, x², n!, sin */
+	for (int i = 0; i < rows * cols; i++) {
+		int x = 4 + (i % cols) * cw, y = gy + (i / cols) * ch, on = i == v->sel;
+		const char *k = keys[i];
+		if (v->sci && !strcmp(k, "DEG")) k = v->deg ? "DEG" : "RAD";
+		int eq = !strcmp(k, "=");
+		uint16_t bg = eq ? (on ? orange_dk : orange) : on ? C_WHITE : SNRGY ? th_surf : C_SURF;
+		rrect(x + 2, y + 2, cw - 4, ch - 4, 6, bg, 1);
+		if (eq && on) rrect(x + 2, y + 2, cw - 4, ch - 4, 6, C_WHITE, 0);	/* the cursor on "=": an ink ring */
+		uint16_t c = eq ? RGB(255, 255, 255) : on ? C_BLACK : calc_is_op(k) || !strcmp(k, "C") ? red : calc_is_fn(k) ? C_GREY : C_WHITE;
+		float mx = x + cw / 2.0f, my = y + ch / 2.0f;
+		if (!strcmp(k, "√")) {	/* the font has no radical: drawn, with an x under its bar */
+			aa_line(mx - 11, my + 1, mx - 8, my - 1, 2.2f, c); aa_line(mx - 8, my - 1, mx - 4, my + 7, 2.4f, c);
+			aa_line(mx - 4, my + 7, mx + 1, my - 8, 2.2f, c); aa_line(mx + 1, my - 8, mx + 11, my - 8, 2.2f, c);
+			text_bold_center((int)mx + 6, y + (ch - LINE_H) / 2 + 2, "x", c);
+		} else if (!strcmp(k, "π")) {	/* nor a pi */
+			aa_draw((struct aa_shape){ 3, mx - 8, my - 7, mx + 8, my - 4.5f, 1.2f }, c);
+			aa_line(mx - 3.5f, my - 5, mx - 4.5f, my + 7, 2.6f, c); aa_line(mx + 3.5f, my - 5, mx + 4.5f, my + 7, 2.6f, c);
+		} else text_bold_center(x + cw / 2, y + (ch - LINE_H) / 2 + 1, k, c);
 	}
+	gfx_caps = caps;
 }
 
 /* (i): the setting's name in the title, an "i" in a red circle and what it does */

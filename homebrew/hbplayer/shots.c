@@ -121,7 +121,7 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	if (getenv("MEASURE")) {	/* widths of fixed texts (layout checks) */
-		const char *t[] = { "17.11.2026", "23:59", "up/down: change", "left/right: day, month, year, hour, min", "PLAY: save", "NW-A91x homebrew", "NWZ-A820 homebrew", "Version 1.1", "2026-11-18", "Free: 23,4 GB", "Settings: 512,3 MB", "License: GPL-2.0", "libmad · FAAD2 · lwIP · Sonic", "gnuboy · Mbed TLS · TJpgDec", "left/right: h / min" };
+		const char *t[] = { "√", "π", "ʸ", "×", "÷", "±", "²", "½", "x^y", "17.11.2026", "23:59", "up/down: change", "left/right: day, month, year, hour, min", "PLAY: save", "NW-A91x homebrew", "NWZ-A820 homebrew", "Version 1.1", "2026-11-18", "Free: 23,4 GB", "Settings: 512,3 MB", "License: GPL-2.0", "libmad · FAAD2 · lwIP · Sonic", "gnuboy · Mbed TLS · TJpgDec", "left/right: h / min" };
 		for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) printf("%3d %3d  %s\n", gfx_text_w(t[i], 1), gfx_text_w(t[i], 2), t[i]);
 		return 0;
 	}
@@ -299,7 +299,7 @@ int main(int argc, char **argv)
 		save("34_descargas_scroll");
 	}
 	{ struct focus_view fv = { 1122, 1500, 0, "brown noise", "bell every 5 min" }; fake_dl = 0; scr_focus(&fv); save("17_modo_foco"); }
-	{ struct calc_view cv = { "1234.5", "1200 + 34.5 =", 19 }; scr_calc(&cv); save("18_calculator"); }
+	{ struct calc_view cv = { "1234.5", "1200 + 34.5 =", 19, 0, 1 }; scr_calc(&cv); save("18_calculator"); cv.sci = 1; cv.sel = 12; cv.value = "0.5"; cv.expr = "sin(30) ="; scr_calc(&cv); save("18b_scientific"); }
 	scr_info("Always-on display", "When the screen times out, the status strip at the top stays lit: time, battery and what is playing."); save("19_info");
 	scr_info("Sony Walkman: power saving", "Experimental: Sony's own firmware runs at half the processor clock. Menus are slower, the battery lasts longer. Applies the next time you switch to Sony."); save("19b_info_long");
 	{	/* mosaic of albums and episode rows */

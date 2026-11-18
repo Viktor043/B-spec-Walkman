@@ -129,10 +129,9 @@ void scr_volume(int vol, int volmax);
 void scr_hold(void);
 int scr_message(const char *title, const char *l1, const char *l2);	/* returns the y below the text */
 /* Tools > Calculator (calc.c) */
-#define CALC_ROWS 5
-#define CALC_COLS 4
-extern const char *const calc_keys[CALC_ROWS * CALC_COLS];
-struct calc_view { const char *value, *expr; int sel; };
+/* the keys: basic 4 x 5, scientific 5 x 7 (Latin-1 signs: x = U+00D7, / = U+00F7, +/- = U+00B1) */
+extern const char *const calc_keys_basic[20], *const calc_keys_sci[35];
+struct calc_view { const char *value, *expr; int sel, sci, deg; };
 void scr_calc(const struct calc_view *v);
 /* a setting's (i) window: the setting's name and what it does */
 void scr_info(const char *label, const char *text);

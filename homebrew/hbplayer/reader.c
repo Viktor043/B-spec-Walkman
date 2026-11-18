@@ -772,7 +772,17 @@ static const char *reader_opt_label(int i)
 /* OPTION: chapters, bookmarks, text size, brightness, orientation. Returns 1 if the position moved (*ch, *off), 2 for a
  * turn of the orientation, 3 when the text size changed (lay the chapter out again); size and brightness change in
  * place (the menu stays) */
+static int reader_saved_rot;	/* the strip's rotation outside a landscape page: the menus use it */
+static int reader_menu_in(int *ch, long *off, int page);
 static int reader_menu(int *ch, long *off, int page)
+{	/* a landscape page owns the whole screen (no rotation): the menus are portrait, the strip on top as everywhere */
+	int land = ui_book_land, rot = gfx_rot;
+	if (land) { ui_fullscreen = 0; gfx_rot = reader_saved_rot; gfx_invalidate(); }
+	int r = reader_menu_in(ch, off, page);
+	if (land && ui_book_land) { ui_fullscreen = 1; gfx_rot = rot; gfx_invalidate(); }	/* (an orientation turn is done by the caller) */
+	return r;
+}
+static int reader_menu_in(int *ch, long *off, int page)
 {
 	struct list_view mv = { "Options", 6, 0, 0, reader_opt_label, 0, 0, LI_NONE, 0, 0 };
 	int resized = 0, s;
@@ -825,6 +835,7 @@ static void reader_run(const char *path)
 	load_text_chapter(ch, 1);	/* image-only sections (the cover page) are skipped: the cover is shown on its own */
 	if (cur_ch != ch) off = 0;
 	int page = page_of(off), redraw = 1, turns = 0, saved_rot = gfx_rot;
+	reader_saved_rot = saved_rot;
 	int first_text = cur_ch;	/* the section the cover page leads to */
 	cov_land = -1;
 	int on_cover = fresh && cover_ready();	/* a book opened for the first time starts on its cover */
@@ -838,9 +849,23 @@ static void reader_run(const char *path)
 		int k = getkey(1000);
 		if (k == K_REDRAW) { redraw = 1; continue; }
 		if (k < 0) continue;
-		if (ui_book_land) {	/* held sideways (the text turned clockwise): the d-pad turns with it, as in the games:
-				 * LEFT points down = next page, RIGHT up = previous, UP / DOWN = brightness down / up */
-			if (k == K_UP) k = K_LEFT; else if (k == K_RIGHT) k = K_UP; else if (k == K_DOWN) k = K_RIGHT; else if (k == K_LEFT) k = K_DOWN;
+		int turn = 0;
+		if (ui_book_land) {	/* held sideways (the text turned clockwise): LEFT points down = next page, RIGHT up = previous;
+				 * UP / DOWN turn the book back to portrait (2026-11-18) */
+			if (k == K_UP || k == K_DOWN) turn = 1;
+			else if (k == K_RIGHT) k = K_UP; else if (k == K_LEFT) k = K_DOWN;
+		}
+		if (turn) {	/* the orientation, at the same place */
+			long here = page * rd_lines() < nlines ? lines[page * rd_lines()].off : 0;
+			ui_book_land = !ui_book_land; ui_fullscreen = ui_book_land;
+			gfx_rot = ui_book_land ? 0 : saved_rot;
+			gfx_invalidate();
+			layout(ctext, clen);
+			if (!nlines) add_line(0, 0, 1, 0);
+			page = page_of(here);
+			settings_save();
+			redraw = 1;
+			continue;
 		}
 		int np = npages(), moved = 0;
 		if (k == K_VOLUP || k == K_VOLDN) { volume_key(k); if (!ui_book_land) redraw_strip = 1; continue; }	/* the music's volume */
