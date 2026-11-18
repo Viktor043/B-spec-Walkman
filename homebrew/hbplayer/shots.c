@@ -183,9 +183,7 @@ int main(int argc, char **argv)
 	  p.art.w = p.art.h = PLAYER_ART_BIG; p.art.px = big_art; }
 	scr_player(&p, 1); save("08_reproduciendo_musica");
 	{ struct img keep = p.art; p.art.w = 0; scr_player(&p, 1); save("08g_no_cover"); p.art = keep; }
-	{ static unsigned char hh[VIS_BANDS], pp[VIS_BANDS];	/* the analyzer with a made-up spectrum */
-	  for (int i = 0; i < VIS_BANDS; i++) { int v = 230 - i * 7 + ((i * 37) % 50) - 25; hh[i] = v < 10 ? 10 : v > 255 ? 255 : v; pp[i] = hh[i] + 14 > 255 ? 255 : hh[i] + 14; }
-	  p.show_vis = 1; p.vis_h = hh; p.vis_pk = pp; scr_player(&p, 1); save("08h_visualizer"); p.show_vis = 0; p.vis_h = p.vis_pk = 0; }
+	scr_poweroff(); save("52_power_off");
 	p.press_btn = 3; p.press_scale = 780; scr_player(&p, 1); save("08i_pressed_next"); p.press_btn = 0; p.press_scale = 0;
 	p.browsing = 1; p.cursor = 4; p.shuffle = 0; p.repeat = 1;
 	scr_player(&p, 1); save("08c_reproduciendo_lista");
@@ -292,7 +290,6 @@ int main(int argc, char **argv)
 	}
 	{ struct focus_view fv = { 1122, 1500, 0, "brown noise", "bell every 5 min" }; fake_dl = 0; scr_focus(&fv); save("17_modo_foco"); }
 	{ struct calc_view cv = { "1234.5", "1200 + 34.5 =", 19 }; scr_calc(&cv); save("18_calculator"); }
-	for (int f = 6; f <= 70; f += 8) { char nm[32]; scr_welcome_frame(f); snprintf(nm, sizeof nm, "50_welcome_%02d", f); save(nm); }
 	scr_info("Always-on display", "When the screen times out, the status strip at the top stays lit: time, battery and what is playing."); save("19_info");
 	scr_info("Sony Walkman: power saving", "Experimental: Sony's own firmware runs at half the processor clock. Menus are slower, the battery lasts longer. Applies the next time you switch to Sony."); save("19b_info_long");
 	{	/* mosaic of albums and episode rows */

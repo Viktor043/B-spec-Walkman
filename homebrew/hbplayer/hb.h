@@ -49,12 +49,6 @@ void voice_quick_menu(void);		/* settings.c: speed, silence trimming, voice boos
 void reader_restart(int i);		/* reader.c: forget where book i of the list was */
 void game_controls(int i);
 void calc_run(void);
-/* vis.c: the spectrum analyzer */
-void vis_push16(const short *s, int frames);
-void vis_push32(const int *s, int frames);
-void vis_frame(const unsigned char **h, const unsigned char **pk, int playing);
-int vis_active(void);
-extern int ui_vis;		/* setting: the analyzer instead of the cover (no cover: always the analyzer) */
 /* led.c: the NW-A91x notification light */
 #include "../common/led_a91x.h"
 extern int ui_led;

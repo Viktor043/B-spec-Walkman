@@ -113,8 +113,12 @@ static int dm_w(const char *s) { int n = 0; for (const unsigned char *p = (const
 #define DM_Y 278
 static void dm_flush(void)
 {
-	gfx_fill(0, 274, W, 4 + DM_ROWS * 2, th_strip);
-	gfx_fill(0, DM_Y + DM_ROWS * 2, W, H - DM_Y - DM_ROWS * 2, ui_aod_now ? 0 : th_strip);	/* the strip runs down to the title */
+	gfx_fill(0, 274, W, H - 274, th_strip);
+	for (int y = 274; y < H; y += 2) {	/* the unlit dot grid fills the whole band, borders included: no plain edge rows */
+		if (y >= DM_Y && y < DM_Y + DM_ROWS * 2) continue;
+		uint16_t *d = fb + y * W;
+		for (int x = 0; x < 120; x++) d[x * 2] = th_dotoff;
+	}
 	for (int y = 0; y < DM_ROWS; y++) for (int x = 0; x < 120; x++) {
 		uint16_t *d = fb + (DM_Y + y * 2) * W + x * 2;
 		if (!dm_on[y][x]) { d[0] = th_dotoff; continue; }
@@ -1044,8 +1048,9 @@ static void round_corners(int x, int y, int s)
 		for (int q = 0; q < 4; q++) if (py[q] >= 0 && py[q] < BOTTOM_Y) fb[py[q] * W + px[q]] = mix565(fb[py[q] * W + px[q]], th_paper, a);
 	}
 }
-/* the spectrum analyzer, Winamp style: black, a faint dot grid, bars green -> yellow -> red by height, grey peak caps */
-static void vis_draw(int x0, int y0, int s, const unsigned char *h, const unsigned char *pk)
+/* no cover (2026-11-18): a black square with a faint dot grid (the old analyzer's background), and a note made of
+ * its dots: the grid points inside the note shape light up red, 2 x 2 px each */
+static void note_square(int x0, int y0, int s)
 {
 	for (int j = 0; j < s; j++) {
 		int y = y0 + j;
@@ -1053,27 +1058,13 @@ static void vis_draw(int x0, int y0, int s, const unsigned char *h, const unsign
 		uint16_t *d = fb + y * W + x0;
 		for (int i = 0; i < s; i++) d[i] = ((i & 3) == 1 && (j & 3) == 1) ? RGB(28, 28, 30) : 0;
 	}
-	if (!h) return;
-	int pad = 10, bw = (s - 2 * pad) / VIS_BANDS, top = y0 + pad, hh = s - 2 * pad, x = x0 + (s - bw * VIS_BANDS) / 2;
-	for (int b = 0; b < VIS_BANDS; b++, x += bw) {
-		int n = h[b] * hh / 255, p = pk ? pk[b] * hh / 255 : 0;
-		for (int k = 0; k < n; k++) {
-			int y = top + hh - 1 - k;
-			if (y < 0 || y >= BOTTOM_Y) continue;
-			int t = k * 255 / hh;	/* the colour belongs to the height, like Winamp: tall bars reach the red */
-			uint16_t c = t < 128 ? RGB(t * 2, 200, 24) : RGB(240, 200 - (t - 128) * 3 / 2, 24);
-			if ((y & 1) == 0) gfx_fill(x, y, bw - 2, 1, c);	/* scanlines: the classic segmented look */
-		}
-		if (p > 2) { int y = top + hh - 1 - p; if (y >= 0 && y < BOTTOM_Y) gfx_fill(x, y, bw - 2, 2, RGB(190, 190, 196)); }
+	int ns = 152, nx = x0 + (s - ns) / 2, ny = y0 + (s - ns) / 2;	/* the note's box, centred */
+	for (int j = 1; j < s; j += 4) for (int i = 1; i < s; i += 4) {
+		int u = (x0 + i - nx) * SNRGY_NOTE_BIG / ns, v = (y0 + j - ny) * SNRGY_NOTE_BIG / ns;
+		if (u < 0 || v < 0 || u >= SNRGY_NOTE_BIG || v >= SNRGY_NOTE_BIG || snrgy_note_big[v * SNRGY_NOTE_BIG + u] < 8) continue;
+		int y = y0 + j;
+		if (y >= 0 && y + 1 < BOTTOM_Y) gfx_fill(x0 + i, y, 2, 2, RGB(0xE2, 0x06, 0x13));
 	}
-}
-void scr_vis_rect(int *x, int *y, int *s) { *s = PLAYER_ART_BIG; *x = (W - *s) / 2; *y = 12; }
-void scr_player_vis(const struct player_view *v)
-{
-	int x, y, s; scr_vis_rect(&x, &y, &s);
-	vis_draw(x, y, s, v->vis_h, v->vis_pk);
-	round_corners(x, y, s);
-	gfx_flip_rect(x, y, s, s);
 }
 static void snrgy_player(const struct player_view *v)
 {
@@ -1092,7 +1083,7 @@ static void snrgy_player(const struct player_view *v)
 			if (v->lrc_prev) gfx_text_wrap(cx + 10, cy + 40, v->lrc_prev, C_GREY, cs - 20, 2, 22);
 			gfx_text_wrap(cx + 10, cy + 96, v->lrc_cur && *v->lrc_cur ? v->lrc_cur : "...", C_WHITE, cs - 20, 3, 22);
 			if (v->lrc_next) gfx_text_wrap(cx + 10, cy + 170, v->lrc_next, C_GREY, cs - 20, 2, 22);
-		} else if (v->show_vis || v->art.w != cs) vis_draw(cx, cy, cs, v->vis_h, v->vis_pk);	/* no cover: the analyzer */
+		} else if (v->art.w != cs) note_square(cx, cy, cs);	/* no cover: the dot note */
 		else if (v->art.w == cs) {
 			for (int j = 0; j < cs; j++) {
 				int y = cy + j;
@@ -1367,87 +1358,10 @@ void scr_splash(const char *line)
 	if (line) gfx_text_center(W / 2, srow(258), line, RGB(120, 120, 120), 1);
 }
 
-/* ---------- the welcome at power-on (2026-11-18): after the PlayStation 2's start-up ----------
- * In the spirit of the PS2 boot (not its footage): a deep blue haze with drifting sparks, a field of translucent
- * towers rising in perspective while the view drifts, a pale flash, then the logo in the PS2's blues on black.
- * 60 ms a frame, ~4.4 s; scr_welcome_frame returns 0 after the last frame. Drawn in screen rows (srow). */
-#define WEL_N 74
-static uint16_t *wel_haze;	/* the blue haze, built once (screen rows) */
-static void wel_px(int x, int y, uint16_t c, int a)	/* blend c over screen pixel (x, y), a 0..16 */
-{
-	if (x < 0 || x >= W || y < 0 || y >= H || a <= 0) return;
-	uint16_t *d = fb + srow(y) * W + x;
-	*d = a >= 16 ? c : mix565(*d, c, a);
-}
-static void wel_add(int x, int y, int r, int g, int b)	/* additive light */
-{
-	if (x < 0 || x >= W || y < 0 || y >= H) return;
-	uint16_t *d = fb + srow(y) * W + x;
-	int rr = (*d >> 11) + r, gg = ((*d >> 5) & 63) + g, bb = (*d & 31) + b;
-	*d = (uint16_t)((rr > 31 ? 31 : rr < 0 ? 0 : rr) << 11 | (gg > 63 ? 63 : gg < 0 ? 0 : gg) << 5 | (bb > 31 ? 31 : bb < 0 ? 0 : bb));
-}
-static float wel_ease(float t) { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); }
-int scr_welcome_frame(int f)
-{
-	if (f >= WEL_N) return 0;
-	if (!wel_haze) {
-		static uint16_t buf[W * H];
-		wel_haze = buf;
-		for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {	/* a glow low in the frame, fading to black at the top */
-			float dx = (x - W / 2) / 170.0f, dy = (y - 230) / 210.0f, d = sqrtf(dx * dx + dy * dy);
-			float k = d > 1 ? 0 : (1 - d) * (1 - d);
-			buf[y * W + x] = RGB((int)(4 + 10 * k), (int)(10 + 46 * k), (int)(28 + 120 * k));
-		}
-	}
-	float haze = wel_ease(f / 12.0f) * (1 - wel_ease((f - 44) / 6.0f));
-	for (int y = 0; y < H; y++) {	/* black + haze */
-		uint16_t *d = fb + srow(y) * W, *h = wel_haze + y * W;
-		if (haze <= 0) { memset(d, 0, W * 2); continue; }
-		int a = (int)(haze * 16);
-		for (int x = 0; x < W; x++) d[x] = mix565(0, h[x], a);
-	}
-	if (f < 50) {	/* sparks: rising slowly, twinkling */
-		for (int i = 0; i < 46; i++) {
-			unsigned s = i * 2654435761u;
-			float x = (s % 240), y0 = 40 + ((s >> 8) % 280), y = y0 - f * (0.6f + (s >> 20) % 10 * 0.12f);
-			int tw = (int)(8 * (0.5f + 0.5f * sinf(f * 0.5f + i))) + 4;
-			int a = (int)(tw * haze);
-			wel_add((int)x, (int)y, a / 3, a * 2 / 3 + 1, a / 2 + 2);
-			if (tw > 9) { wel_add((int)x + 1, (int)y, a / 6, a / 3, a / 4); wel_add((int)x, (int)y + 1, a / 6, a / 3, a / 4); }
-		}
-	}
-	if (f >= 10 && f < 52) {	/* the towers: 9 x 6 columns on a plane, rising staggered, the view drifting right */
-		float cam = -0.8f + (f - 10) * 0.035f, fade = 1 - wel_ease((f - 42) / 10.0f), horizon = 150, fl = 150;
-		for (int row = 5; row >= 0; row--) for (int col = 0; col < 9; col++) {
-			unsigned s = (row * 9 + col) * 2246822519u;
-			float z = 1.6f + row * 0.85f, x = (col - 4) * 0.62f;
-			float hgt = 0.25f + (s >> 24) / 255.0f * 1.9f, rise = wel_ease((f - 12 - (row + (col & 3)) * 1.6f) / 12.0f);
-			if (rise <= 0) continue;
-			float px = W / 2 + (x - cam) * fl / z, base = horizon + 1.1f * fl / z, top = base - hgt * rise * fl / z, w = 0.42f * fl / z;
-			int x0 = (int)(px - w / 2), x1 = (int)(px + w / 2), y0 = (int)top, y1 = (int)base;
-			if (y1 - y0 < 3) continue;	/* not up yet: no stray line on the floor */
-			int a = (int)(6 * fade * (1.2f - row * 0.12f));	/* glassy: faint faces, brighter edges and top */
-			for (int y = y0; y < y1; y++) for (int xx = x0; xx < x1; xx++) wel_px(xx, y, RGB(120, 170, 255), a);
-			for (int y = y0; y < y1; y++) { wel_px(x0, y, RGB(170, 210, 255), a * 2); wel_px(x1 - 1, y, RGB(170, 210, 255), a * 2); }
-			for (int xx = x0; xx < x1; xx++) { wel_px(xx, y0, RGB(220, 240, 255), a * 3); wel_px(xx, y0 + 1, RGB(170, 210, 255), a * 2); }
-		}
-	}
-	if (f >= 44 && f < 56) {	/* the pale flash between the towers and the logo */
-		float k = f < 49 ? (f - 44) / 5.0f : 1 - (f - 49) / 7.0f;
-		int a = (int)(k * 14);
-		for (int y = 0; y < H; y++) { uint16_t *d = fb + srow(y) * W; for (int x = 0; x < W; x++) d[x] = mix565(d[x], RGB(200, 225, 255), a); }
-	}
-	if (f >= 50) {
-		int a = (int)(wel_ease((f - 50) / 12.0f) * 256);
-		gfx_walkman_logo_a(118, a, 0);
-		int g = 30 + a * 120 / 256;
-		gfx_text_center(W / 2, srow(258), "Welcome", RGB(g * 3 / 4, g * 7 / 8, g), 1);
-	}
-	return 1;
-}
-
 void scr_poweroff(void)
 {
+	struct img p = gfx_tex(17, 7);	/* Sony's own POWER OFF picture (240 x 320), in screen rows; without it, ours */
+	if (p.w == W && p.h == H) { for (int y = 0; y < H; y++) memcpy(fb + srow(y) * W, p.px + y * W, W * 2); return; }
 	gfx_walkman_logo(118);
 	gfx_text_center(W / 2, srow(258), "Goodbye", RGB(200, 200, 200), 1);
 }

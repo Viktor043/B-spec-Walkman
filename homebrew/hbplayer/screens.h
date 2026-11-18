@@ -90,12 +90,7 @@ struct player_view {
 	int browsing, cursor;		/* SNRGY: the queue under the cover is being browsed; the highlighted row */
 	const char *(*qtitle)(int);	/* SNRGY: title of queue position i (0..ntr-1) */
 	int press_btn, press_scale;	/* SNRGY: a transport button being pressed (1 prev, 2 play, 3 next) and its scale x1000 */
-	int show_vis;			/* SNRGY: the spectrum analyzer in the cover's place */
-	const unsigned char *vis_h, *vis_pk;	/* its bars and peak caps (0..255), VIS_BANDS of each */
 };
-#define VIS_BANDS 24
-void scr_player_vis(const struct player_view *v);	/* only the analyzer square (and gfx_flip_rect it) */
-void scr_vis_rect(int *x, int *y, int *s);		/* where the analyzer is, in back-buffer rows */
 
 struct focus_view { int left, total, paused; const char *l1, *l2; };
 
@@ -132,8 +127,7 @@ extern const int home_order_n;
 #define PLAYER_ART_BIG 216	/* SNRGY player: the cover, 12 px from the sides and the top; one control row under it */
 void scr_volume(int vol, int volmax);
 void scr_hold(void);
-int scr_message(const char *title, const char *l1, const char *l2);
-int scr_welcome_frame(int f);	/* power-on welcome: frame f (60 ms each); 0 = finished */	/* returns the y below the text */
+int scr_message(const char *title, const char *l1, const char *l2);	/* returns the y below the text */
 /* Tools > Calculator (calc.c) */
 #define CALC_ROWS 5
 #define CALC_COLS 4

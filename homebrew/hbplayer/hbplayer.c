@@ -229,7 +229,6 @@ static void wd_disarm(void)
  * follows a slow average and the cut-off needs three low readings in a row (one a minute apart is 20 s each). */
 static int last_adc, batt_low;	/* batt_low: consecutive readings at the cut-off level */
 int batt_power;
-int ui_vis;	/* the analyzer instead of the cover */
 static double adc_avg;
 static void battery_update(void)
 {
@@ -814,7 +813,7 @@ static void pos_load(void)
 		if (!strncmp(line, "book ", 5)) { int z = 1, o = 0; sscanf(line + 5, "%d %d", &z, &o); ui_book_size = z < 0 ? 0 : z > 7 ? 7 : z; ui_book_land = o == 1; continue; }
 		if (!strncmp(line, "calm ", 5)) { ui_strip_calm = atoi(line + 5) == 1; continue; }
 		if (!strncmp(line, "led ", 4)) { ui_led = atoi(line + 4) != 0; continue; }
-		if (!strncmp(line, "vis ", 4)) { ui_vis = atoi(line + 4) != 0; continue; }
+		if (!strncmp(line, "vis ", 4)) continue;	/* the analyzer setting (removed 2026-11-18) */
 		if (!strncmp(line, "volmax ", 7)) { vol_boost = atoi(line + 7); if (vol_boost < 0 || vol_boost > 3) vol_boost = 0; continue; }
 		if (!strncmp(line, "wall ", 5)) { ui_wall = atoi(line + 5); if (ui_wall < 0 || ui_wall >= WALL_COUNT) ui_wall = 0; continue; }
 		if (!strncmp(line, "grid ", 5)) { ui_album_grid = atoi(line + 5) == 1; continue; }
@@ -848,7 +847,7 @@ void pos_save(void)
 	fprintf(f, "vol30 %d\nmode %d %d\nui %d %d\nalarm %d %d %d %d\nspeed %d\nrg %d\n", volume, eng_shuffle, eng_repeat, ui_brightness, ui_dim_secs, alarm_cfg.on, alarm_cfg.hour, alarm_cfg.min, alarm_cfg.src, eng_speed, replaygain_mode);
 	{ char fo[32]; focus_save(fo, sizeof fo); fprintf(f, "rows %d\ngrid %d\nbeep %d\npodc %s\nlang %d\nfocus %s\n", ui_big_rows, ui_album_grid, ui_beep, pod_country, ui_lang, fo); }
 	fprintf(f, "wall %d\ntheme %d\naod %d %d\ncalm %d\nbook %d %d\nvolmax %d\n", ui_wall, ui_theme, ui_aod, ui_aod_level, ui_strip_calm, ui_book_size, ui_book_land, vol_boost);
-	fprintf(f, "led %d\nvis %d\n", ui_led, ui_vis);
+	fprintf(f, "led %d\n", ui_led);
 	if (lastfile[0]) fprintf(f, "last %s\n", lastfile);
 	for (int i = 0; i < npos; i++) fprintf(f, "%ld %d %s\n", poss[i].bytes, poss[i].sec, poss[i].path);
 	int bad = ferror(f);
@@ -987,9 +986,7 @@ static void play_options(int music)
 {
 	struct list_view v = { "Options", 0, 0, 0, opt_label, 0, 0, LI_NONE, 0, 0 };
 	for (;;) {
-		int snd = music ? 3 : 2 + (chap_count() > 0);	/* then "Show" (SNRGY), then the quick sound menu */
-		int show = ui_theme ? snd : -1;
-		if (ui_theme) { snprintf(opt_items[snd], 40, "Show: %s", ui_vis ? "visualizer" : "cover"); snd++; }
+		int snd = music ? 3 : 2 + (chap_count() > 0);	/* the last row: the quick sound menu */
 		v.n = snd + 1;
 		snprintf(opt_items[snd], 40, "Sound");
 		int m = eng_sleep_left();
@@ -1003,7 +1000,6 @@ static void play_options(int music)
 		if (s < 0) return;
 		pending_slide = 0;
 		if (s == snd) { pending_slide = 1; sound_quick_menu(0); pending_slide = -1; continue; }
-		if (s == show) { ui_vis = !ui_vis; pos_dirty = 1; pos_save(); continue; }
 		if (s == 0) { int cur = eng_sleep_min; eng_set_sleep(cur >= 60 ? 0 : cur + 15); }
 		else if (s == 1 && music) { eng_shuffle = !eng_shuffle; pos_dirty = 1; }
 		else if (s == 1) { static const int sp[] = { 100, 125, 150, 200, 75 }; int i = 0; while (i < 5 && sp[i] != eng_speed) i++; eng_speed = sp[(i + 1) % 5]; pos_dirty = 1; }
@@ -1030,9 +1026,8 @@ void nowplaying_run(void)
 	int lr_key = -1, scrub = 0;
 	double lr_t = 0, scrub_pos = 0, scrub_t = 0;
 	char chapline[120];
-	/* SNRGY: a pressed transport button shrinks and springs back; the analyzer refreshes its square ~20 times a second */
-	int press_btn = 0; double press_down = 0, press_up = 0, vis_t = 0;
-	const unsigned char *vh = 0, *vpk = 0;
+	/* SNRGY: a pressed transport button shrinks and springs back */
+	int press_btn = 0; double press_down = 0, press_up = 0;
 	double t_in = now();	/* the first frame's preparation, for the timing line below */
 	wake();
 	for (;;) {
@@ -1060,8 +1055,6 @@ void nowplaying_run(void)
 			else if (t - press_up < 0.25) { double u = t - press_up; press_scale = 1000 - (int)(220 * exp(-u * 16) * cos(u * 26)); }
 			else press_btn = 0;
 		}
-		int show_vis = ui_theme && !show_lrc && (ui_vis || !has_art);
-		if (show_vis && !vh) vis_frame(&vh, &vpk, 0);
 		if (backlight_on && !popup_active() && (full || e.sec != lastsec || scrub || press_btn)) {
 			memset(&pv, 0, sizeof pv);
 			pv.book = e.context; pv.track = e.title; pv.sub = e.sub; pv.genre = e.genre; pv.year = e.year;
@@ -1089,7 +1082,6 @@ void nowplaying_run(void)
 			pv.lrc_next = show_lrc ? lrc_text(lidx + 1) : 0;
 			pv.show_lrc = show_lrc;
 			pv.press_btn = press_btn; pv.press_scale = press_scale;
-			pv.show_vis = show_vis; pv.vis_h = vh; pv.vis_pk = vpk;
 			ui_st.playing = e.paused ? 2 : 1;
 			scr_player(&pv, full);
 			if (t_in) { double ms = (now() - t_in) * 1000; if (ms > 60) lg("ui: player screen drawn in %d ms (cover %s)", (int)ms, has_art ? "cached" : "later"); t_in = 0; }
@@ -1107,14 +1099,8 @@ void nowplaying_run(void)
 			}
 		}
 		if (!backlight_on) full = 1;
-		else if (show_vis && !browsing && !popup_active() && (eng_playing() || vis_active()) && now() - vis_t >= 0.05) {
-			vis_t = now();
-			vis_frame(&vh, &vpk, eng_playing() && !e.paused);
-			pv.vis_h = vh; pv.vis_pk = vpk;
-			scr_player_vis(&pv);	/* only the square: the rest of the screen stays */
-		}
 		idle_tick(0);
-		int k = poll_key(press_btn ? 20 : show_vis && (eng_playing() || vis_active()) ? 40 : lr_key >= 0 ? 60 : 500);
+		int k = poll_key(press_btn ? 20 : lr_key >= 0 ? 60 : 500);
 		if (lr_key >= 0) {
 			int music = e.mode == ENG_MUSIC, dir = lr_key == K_RIGHT ? 1 : -1;
 			if (held_code != lr_key) {	/* released */
@@ -2021,20 +2007,12 @@ static void migrate_folders(void)
 static int run(void)
 {
 	cover_tick = tick_audio;
-	{	/* power-on (not a return from USB or from Sony's UI): the welcome animation; any key skips it */
+	{	/* power-on: Sony's own start-up picture stays on the LCD (gfx_open doesn't clear it) until the home screen;
+		 * a return from USB or from Sony's UI shows the splash while the player loads */
 		FILE *u = fopen("/proc/uptime", "r"); double up = 999;
 		if (u) { if (fscanf(u, "%lf", &up) != 1) up = 999; fclose(u); }
-		if (up < 100) {
-			for (int f = 0; scr_welcome_frame(f); f++) {
-				gfx_flip();
-				struct ev e; double t0 = now();
-				int key = 0;
-				while (!key && now() - t0 < 0.06) if (raw_event(&e, 20) && e.type == 1 && KEY_PRESSED(e.value)) key = 1;
-				if (key) break;
-			}
-		}
+		if (up >= 100) { scr_splash("Opening..."); gfx_flip(); }
 	}
-	scr_splash("Opening..."); gfx_flip();
 	int first = 0;
 	{ char p[PATHLEN + 16]; snprintf(p, sizeof p, "%s/pos.txt", statedir); first = access(p, F_OK) != 0; }
 	pos_load();
