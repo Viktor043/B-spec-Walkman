@@ -229,6 +229,7 @@ static void wd_disarm(void)
  * follows a slow average and the cut-off needs three low readings in a row (one a minute apart is 20 s each). */
 static int last_adc, batt_low;	/* batt_low: consecutive readings at the cut-off level */
 int batt_power;
+int ui_scrub_sec = -1;	/* now playing: the scrub position while LEFT / RIGHT is held, -1 otherwise */
 static double adc_avg;
 static void battery_update(void)
 {
@@ -593,8 +594,10 @@ static void np_update(void)
 		}
 	}
 	ui_st.np_title = t; ui_st.np_artist = a;
+	extern int ui_scrub_sec;
 	if (eng_active()) { struct eng_info e; eng_info(&e); ui_st.np_idx = e.idx; ui_st.np_n = e.n; ui_st.np_sec = e.sec; ui_st.np_total = e.total; ui_st.np_sleep = eng_sleep_left(); ui_st.np_speed = eng_speed; }
 	else ui_st.np_idx = ui_st.np_n = ui_st.np_sec = ui_st.np_total = ui_st.np_sleep = ui_st.np_speed = 0;
+	if (ui_scrub_sec >= 0) ui_st.np_sec = ui_scrub_sec;	/* scrubbing: the strip shows where the release will land */
 }
 
 static void settings_flush(void);
@@ -1026,12 +1029,14 @@ void nowplaying_run(void)
 	int lr_key = -1, scrub = 0;
 	double lr_t = 0, scrub_pos = 0, scrub_t = 0;
 	char chapline[120];
-	/* SNRGY: a pressed transport button shrinks and springs back */
-	int press_btn = 0; double press_down = 0, press_up = 0;
+	/* SNRGY: a pressed transport button shrinks at once, stays down while held, then springs back. Counted in drawn
+	 * frames (at least 2 pressed, then a spring stepped at most 35 ms a frame), so a slow frame (a new cover) never
+	 * swallows it; the cover is decoded only after it */
+	int press_btn = 0, press_held = 0, press_frames = 0; double press_phase = 0, press_last = 0;
 	double t_in = now();	/* the first frame's preparation, for the timing line below */
 	wake();
 	for (;;) {
-		if (!eng_active()) { pending_slide = -1; return; }
+		if (!eng_active()) { ui_scrub_sec = -1; pending_slide = -1; return; }
 		eng_info(&e);
 		if (strcmp(lastpath, e.path)) {	/* new track: its cover from the cache right away, else after the first frame */
 			snprintf(lastpath, sizeof lastpath, "%s", e.path);
@@ -1049,11 +1054,16 @@ void nowplaying_run(void)
 		if (eng_changed()) full = 1;
 		if (popup_expired()) full = 1;
 		int press_scale = 1000;
-		if (press_btn) {	/* in 40 ms to 78 %, held there; on release a small spring back over 0.25 s */
+		if (press_btn) {
 			double t = now();
-			if (!press_up || t < press_up) { double k = (t - press_down) / 0.04; press_scale = 1000 - (int)(220 * (k > 1 ? 1 : k)); }
-			else if (t - press_up < 0.25) { double u = t - press_up; press_scale = 1000 - (int)(220 * exp(-u * 16) * cos(u * 26)); }
-			else press_btn = 0;
+			if (press_held || press_frames < 2) press_scale = 780;
+			else {
+				double dt = t - press_last; if (dt > 0.035) dt = 0.035; if (dt < 0) dt = 0;
+				press_phase += dt;
+				if (press_phase >= 0.25) press_btn = 0;
+				else press_scale = 1000 - (int)(220 * exp(-press_phase * 16) * cos(press_phase * 26));
+			}
+			press_last = t;
 		}
 		if (backlight_on && !popup_active() && (full || e.sec != lastsec || scrub || press_btn)) {
 			memset(&pv, 0, sizeof pv);
@@ -1082,13 +1092,15 @@ void nowplaying_run(void)
 			pv.lrc_next = show_lrc ? lrc_text(lidx + 1) : 0;
 			pv.show_lrc = show_lrc;
 			pv.press_btn = press_btn; pv.press_scale = press_scale;
+			if (press_btn) press_frames++;
+			if (scrub) ui_st.np_sec = (int)scrub_pos;	/* the strip's time follows the scrub */
 			ui_st.playing = e.paused ? 2 : 1;
 			scr_player(&pv, full);
 			if (t_in) { double ms = (now() - t_in) * 1000; if (ms > 60) lg("ui: player screen drawn in %d ms (cover %s)", (int)ms, has_art ? "cached" : "later"); t_in = 0; }
 			if (full) flip(); else gfx_flip();
 			full = 0; lastsec = e.sec;
 			/* the title is on screen: now decode the cover (never with the screen off: it waits for the wake-up) */
-			if (art_pending) {
+			if (art_pending && !press_btn) {	/* after the button animation */
 				double t = now();
 				cover_cancel = key_waiting;	/* skipping tracks quickly: never wait for a cover nobody will see */
 				art_pending = 0; has_art = cover_load(e.path, art, asz);
@@ -1104,7 +1116,8 @@ void nowplaying_run(void)
 		if (lr_key >= 0) {
 			int music = e.mode == ENG_MUSIC, dir = lr_key == K_RIGHT ? 1 : -1;
 			if (held_code != lr_key) {	/* released */
-				if (press_btn && !press_up) press_up = now();
+				press_held = 0;
+				ui_scrub_sec = -1;
 				if (scrub) eng_seek_to(scrub_pos);
 				else if (music) { beep(dir > 0 ? BEEP_TWO : BEEP_THREE); if (dir > 0) eng_next(); else eng_prev(); }
 				else eng_seek(30 * dir);
@@ -1116,6 +1129,7 @@ void nowplaying_run(void)
 				scrub_pos += dir * rate * (t - scrub_t); scrub_t = t;
 				if (scrub_pos < 0) scrub_pos = 0;
 				if (e.total > 0 && scrub_pos > e.total - 1) scrub_pos = e.total - 1;
+				ui_scrub_sec = (int)scrub_pos;	/* the strip shows it at once (np_update keeps it) */
 				if (k == K_LEFT || k == K_RIGHT) continue;	/* the auto-repeat of the held key */
 			} else if (k == K_LEFT || k == K_RIGHT) continue;
 		}
@@ -1133,9 +1147,9 @@ void nowplaying_run(void)
 		}
 		if (ui_theme && browsing && k == K_BACK) { browsing = 0; full = 1; continue; }
 		if (ui_theme && browsing && k == K_PLAY) { if (cursor != e.idx) { beep(BEEP_ONE); eng_play_at(cursor); } else eng_toggle(); browsing = 0; full = 1; continue; }
-		if (k == K_PLAY) { beep(BEEP_ONE); eng_toggle(); press_btn = 2; press_down = now(); press_up = press_down + 0.09; }
-		else if (k == K_BACK) { pending_slide = -1; return; }
-		else if (k == K_LEFT || k == K_RIGHT) { lr_key = k; lr_t = now(); scrub = 0; press_btn = k == K_LEFT ? 1 : 3; press_down = lr_t; press_up = 0; continue; }	/* decided on release / hold */
+		if (k == K_PLAY) { beep(BEEP_ONE); eng_toggle(); press_btn = 2; press_held = 0; press_frames = 0; press_phase = 0; }
+		else if (k == K_BACK) { ui_scrub_sec = -1; pending_slide = -1; return; }
+		else if (k == K_LEFT || k == K_RIGHT) { lr_key = k; lr_t = now(); scrub = 0; press_btn = k == K_LEFT ? 1 : 3; press_held = 1; press_frames = 0; press_phase = 0; continue; }	/* decided on release / hold */
 		else if (k == K_UP) {
 			if (lrc_count()) { show_lrc = !show_lrc; last_lidx = -2; }
 			else if (music) eng_seek(-15);

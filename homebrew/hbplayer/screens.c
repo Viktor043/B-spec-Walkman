@@ -1058,7 +1058,7 @@ static void note_square(int x0, int y0, int s)
 		uint16_t *d = fb + y * W + x0;
 		for (int i = 0; i < s; i++) d[i] = ((i & 3) == 1 && (j & 3) == 1) ? RGB(28, 28, 30) : 0;
 	}
-	int ns = 152, nx = x0 + (s - ns) / 2, ny = y0 + (s - ns) / 2;	/* the note's box, centred */
+	int ns = 129, nx = x0 + (s - ns) / 2, ny = y0 + (s - ns) / 2;	/* the note's box, centred (15 % smaller than 152) */
 	for (int j = 1; j < s; j += 4) for (int i = 1; i < s; i += 4) {
 		int u = (x0 + i - nx) * SNRGY_NOTE_BIG / ns, v = (y0 + j - ny) * SNRGY_NOTE_BIG / ns;
 		if (u < 0 || v < 0 || u >= SNRGY_NOTE_BIG || v >= SNRGY_NOTE_BIG || snrgy_note_big[v * SNRGY_NOTE_BIG + u] < 8) continue;
