@@ -8,6 +8,7 @@
  * Playback runs in the background (engine.c): every UI loop calls eng_step(). Keys (../common/keys.h).
  * State in STATEDIR: pos.txt (positions, last file, volume), bt.txt, bt/, gb/, log.txt. */
 #include "hb.h"
+double exp(double); double cos(double);	/* (math.h would clash with our log file variable logf) */
 #include "podsearch.h"
 #include <sys/soundcard.h>
 #include <ucontext.h>
@@ -228,6 +229,7 @@ static void wd_disarm(void)
  * follows a slow average and the cut-off needs three low readings in a row (one a minute apart is 20 s each). */
 static int last_adc, batt_low;	/* batt_low: consecutive readings at the cut-off level */
 int batt_power;
+int ui_vis;	/* the analyzer instead of the cover */
 static double adc_avg;
 static void battery_update(void)
 {
@@ -812,6 +814,7 @@ static void pos_load(void)
 		if (!strncmp(line, "book ", 5)) { int z = 1, o = 0; sscanf(line + 5, "%d %d", &z, &o); ui_book_size = z < 0 ? 0 : z > 7 ? 7 : z; ui_book_land = o == 1; continue; }
 		if (!strncmp(line, "calm ", 5)) { ui_strip_calm = atoi(line + 5) == 1; continue; }
 		if (!strncmp(line, "led ", 4)) { ui_led = atoi(line + 4) != 0; continue; }
+		if (!strncmp(line, "vis ", 4)) { ui_vis = atoi(line + 4) != 0; continue; }
 		if (!strncmp(line, "volmax ", 7)) { vol_boost = atoi(line + 7); if (vol_boost < 0 || vol_boost > 3) vol_boost = 0; continue; }
 		if (!strncmp(line, "wall ", 5)) { ui_wall = atoi(line + 5); if (ui_wall < 0 || ui_wall >= WALL_COUNT) ui_wall = 0; continue; }
 		if (!strncmp(line, "grid ", 5)) { ui_album_grid = atoi(line + 5) == 1; continue; }
@@ -845,7 +848,7 @@ void pos_save(void)
 	fprintf(f, "vol30 %d\nmode %d %d\nui %d %d\nalarm %d %d %d %d\nspeed %d\nrg %d\n", volume, eng_shuffle, eng_repeat, ui_brightness, ui_dim_secs, alarm_cfg.on, alarm_cfg.hour, alarm_cfg.min, alarm_cfg.src, eng_speed, replaygain_mode);
 	{ char fo[32]; focus_save(fo, sizeof fo); fprintf(f, "rows %d\ngrid %d\nbeep %d\npodc %s\nlang %d\nfocus %s\n", ui_big_rows, ui_album_grid, ui_beep, pod_country, ui_lang, fo); }
 	fprintf(f, "wall %d\ntheme %d\naod %d %d\ncalm %d\nbook %d %d\nvolmax %d\n", ui_wall, ui_theme, ui_aod, ui_aod_level, ui_strip_calm, ui_book_size, ui_book_land, vol_boost);
-	fprintf(f, "led %d\n", ui_led);
+	fprintf(f, "led %d\nvis %d\n", ui_led, ui_vis);
 	if (lastfile[0]) fprintf(f, "last %s\n", lastfile);
 	for (int i = 0; i < npos; i++) fprintf(f, "%ld %d %s\n", poss[i].bytes, poss[i].sec, poss[i].path);
 	int bad = ferror(f);
@@ -984,7 +987,9 @@ static void play_options(int music)
 {
 	struct list_view v = { "Options", 0, 0, 0, opt_label, 0, 0, LI_NONE, 0, 0 };
 	for (;;) {
-		int snd = music ? 3 : 2 + (chap_count() > 0);	/* the last row: the quick sound menu */
+		int snd = music ? 3 : 2 + (chap_count() > 0);	/* then "Show" (SNRGY), then the quick sound menu */
+		int show = ui_theme ? snd : -1;
+		if (ui_theme) { snprintf(opt_items[snd], 40, "Show: %s", ui_vis ? "visualizer" : "cover"); snd++; }
 		v.n = snd + 1;
 		snprintf(opt_items[snd], 40, "Sound");
 		int m = eng_sleep_left();
@@ -998,6 +1003,7 @@ static void play_options(int music)
 		if (s < 0) return;
 		pending_slide = 0;
 		if (s == snd) { pending_slide = 1; sound_quick_menu(0); pending_slide = -1; continue; }
+		if (s == show) { ui_vis = !ui_vis; pos_dirty = 1; pos_save(); continue; }
 		if (s == 0) { int cur = eng_sleep_min; eng_set_sleep(cur >= 60 ? 0 : cur + 15); }
 		else if (s == 1 && music) { eng_shuffle = !eng_shuffle; pos_dirty = 1; }
 		else if (s == 1) { static const int sp[] = { 100, 125, 150, 200, 75 }; int i = 0; while (i < 5 && sp[i] != eng_speed) i++; eng_speed = sp[(i + 1) % 5]; pos_dirty = 1; }
@@ -1024,6 +1030,9 @@ void nowplaying_run(void)
 	int lr_key = -1, scrub = 0;
 	double lr_t = 0, scrub_pos = 0, scrub_t = 0;
 	char chapline[120];
+	/* SNRGY: a pressed transport button shrinks and springs back; the analyzer refreshes its square ~20 times a second */
+	int press_btn = 0; double press_down = 0, press_up = 0, vis_t = 0;
+	const unsigned char *vh = 0, *vpk = 0;
 	double t_in = now();	/* the first frame's preparation, for the timing line below */
 	wake();
 	for (;;) {
@@ -1044,7 +1053,16 @@ void nowplaying_run(void)
 		if (cidx != last_cidx) { last_cidx = cidx; full = 1; }
 		if (eng_changed()) full = 1;
 		if (popup_expired()) full = 1;
-		if (backlight_on && !popup_active() && (full || e.sec != lastsec || scrub)) {
+		int press_scale = 1000;
+		if (press_btn) {	/* in 40 ms to 78 %, held there; on release a small spring back over 0.25 s */
+			double t = now();
+			if (!press_up || t < press_up) { double k = (t - press_down) / 0.04; press_scale = 1000 - (int)(220 * (k > 1 ? 1 : k)); }
+			else if (t - press_up < 0.25) { double u = t - press_up; press_scale = 1000 - (int)(220 * exp(-u * 16) * cos(u * 26)); }
+			else press_btn = 0;
+		}
+		int show_vis = ui_theme && !show_lrc && (ui_vis || !has_art);
+		if (show_vis && !vh) vis_frame(&vh, &vpk, 0);
+		if (backlight_on && !popup_active() && (full || e.sec != lastsec || scrub || press_btn)) {
 			memset(&pv, 0, sizeof pv);
 			pv.book = e.context; pv.track = e.title; pv.sub = e.sub; pv.genre = e.genre; pv.year = e.year;
 			if (e.mode == ENG_BOOK && e.path) {	/* the kind in the title bar (like "Songs"), the show on the first line */
@@ -1070,6 +1088,8 @@ void nowplaying_run(void)
 			pv.lrc_cur = show_lrc ? lrc_text(lidx) : 0;
 			pv.lrc_next = show_lrc ? lrc_text(lidx + 1) : 0;
 			pv.show_lrc = show_lrc;
+			pv.press_btn = press_btn; pv.press_scale = press_scale;
+			pv.show_vis = show_vis; pv.vis_h = vh; pv.vis_pk = vpk;
 			ui_st.playing = e.paused ? 2 : 1;
 			scr_player(&pv, full);
 			if (t_in) { double ms = (now() - t_in) * 1000; if (ms > 60) lg("ui: player screen drawn in %d ms (cover %s)", (int)ms, has_art ? "cached" : "later"); t_in = 0; }
@@ -1087,11 +1107,18 @@ void nowplaying_run(void)
 			}
 		}
 		if (!backlight_on) full = 1;
+		else if (show_vis && !browsing && !popup_active() && (eng_playing() || vis_active()) && now() - vis_t >= 0.05) {
+			vis_t = now();
+			vis_frame(&vh, &vpk, eng_playing() && !e.paused);
+			pv.vis_h = vh; pv.vis_pk = vpk;
+			scr_player_vis(&pv);	/* only the square: the rest of the screen stays */
+		}
 		idle_tick(0);
-		int k = poll_key(lr_key >= 0 ? 60 : 500);
+		int k = poll_key(press_btn ? 20 : show_vis && (eng_playing() || vis_active()) ? 40 : lr_key >= 0 ? 60 : 500);
 		if (lr_key >= 0) {
 			int music = e.mode == ENG_MUSIC, dir = lr_key == K_RIGHT ? 1 : -1;
 			if (held_code != lr_key) {	/* released */
+				if (press_btn && !press_up) press_up = now();
 				if (scrub) eng_seek_to(scrub_pos);
 				else if (music) { beep(dir > 0 ? BEEP_TWO : BEEP_THREE); if (dir > 0) eng_next(); else eng_prev(); }
 				else eng_seek(30 * dir);
@@ -1120,9 +1147,9 @@ void nowplaying_run(void)
 		}
 		if (ui_theme && browsing && k == K_BACK) { browsing = 0; full = 1; continue; }
 		if (ui_theme && browsing && k == K_PLAY) { if (cursor != e.idx) { beep(BEEP_ONE); eng_play_at(cursor); } else eng_toggle(); browsing = 0; full = 1; continue; }
-		if (k == K_PLAY) { beep(BEEP_ONE); eng_toggle(); }
+		if (k == K_PLAY) { beep(BEEP_ONE); eng_toggle(); press_btn = 2; press_down = now(); press_up = press_down + 0.09; }
 		else if (k == K_BACK) { pending_slide = -1; return; }
-		else if (k == K_LEFT || k == K_RIGHT) { lr_key = k; lr_t = now(); scrub = 0; continue; }	/* decided on release / hold */
+		else if (k == K_LEFT || k == K_RIGHT) { lr_key = k; lr_t = now(); scrub = 0; press_btn = k == K_LEFT ? 1 : 3; press_down = lr_t; press_up = 0; continue; }	/* decided on release / hold */
 		else if (k == K_UP) {
 			if (lrc_count()) { show_lrc = !show_lrc; last_lidx = -2; }
 			else if (music) eng_seek(-15);

@@ -361,6 +361,7 @@ static int hires_frame(void)
 		if (fade_left > 0) v = v * (8000 - fade_left) / 8000;
 		out[i] = v > 0x7fffffffLL ? 0x7fffffff : v < -0x80000000LL ? (int)0x80000000 : (int)v;
 	}
+	vis_push32(out, m);
 	if (aout_write32(out, m)) { lg("eng: audio write failed"); aout_stop(); return 0; }
 	return 1;
 }
@@ -465,6 +466,7 @@ static int eng_frame(void)
 			out[2 * i] = (short)((out[2 * i] * f) >> 12); out[2 * i + 1] = (short)((out[2 * i + 1] * f) >> 12);
 		}
 	}
+	vis_push16(out, n);	/* the analyzer sees what is heard */
 	int wr = aout_write(out, n);
 	PF(6);
 	if (eng_prof) pf_frames += n;

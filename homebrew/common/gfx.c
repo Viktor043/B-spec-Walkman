@@ -603,12 +603,12 @@ int gfx_text_wrap(int x, int y, const char *s, uint16_t c, int maxw, int lines, 
 /* 2026-11-13: black screen with the WALKMAN logo alone. Cut from Sony's splash (17,19: logo at x 61-178, y 119-180)
  * keeping only the white core (the smallest channel, as grey): the blue glow and gradient are gone. Screen rows
  * (gfx_rot applied), so it sits in the same place under the SNRGY looks. */
-/* 2026-11-18: the logo in gold, a metallic gradient down its height (dark gold, a bright band, warm gold, dark),
- * like the gold lettering of the original PlayStation's start-up; l (0..255) is the logo's own shading */
+/* 2026-11-18: the logo in the PlayStation 2's blues, a metallic gradient down its height (deep blue, an ice-blue
+ * band, the bright PS2 blue, deep again); l (0..255) is the logo's own shading */
 static uint16_t logo_gold(int l, int t)	/* t 0..255 from the logo's top to its bottom */
 {
-	static const unsigned char st[5][4] = { { 0, 0x8a, 0x66, 0x1a }, { 95, 0xfb, 0xe8, 0x9c }, { 140, 0xe6, 0xbd, 0x52 },
-		{ 205, 0xb8, 0x88, 0x28 }, { 255, 0x7a, 0x55, 0x14 } };
+	static const unsigned char st[5][4] = { { 0, 0x12, 0x34, 0x8c }, { 95, 0xb4, 0xdc, 0xff }, { 140, 0x52, 0x96, 0xf2 },
+		{ 205, 0x22, 0x5e, 0xcc }, { 255, 0x0c, 0x28, 0x7c } };
 	int k = 0;
 	while (k < 3 && t > st[k + 1][0]) k++;
 	int span = st[k + 1][0] - st[k][0], f = span ? (t - st[k][0]) * 256 / span : 0;
@@ -618,7 +618,7 @@ static uint16_t logo_gold(int l, int t)	/* t 0..255 from the logo's top to its b
 	return (uint16_t)((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3));
 }
 
-/* the gold logo with its top at screen row sy0, at opacity a (0..256) over what is there; clear: black first */
+/* the (blue) logo with its top at screen row sy0, at opacity a (0..256) over what is there; clear: black first */
 void gfx_walkman_logo_a(int sy0, int a, int clear)
 {
 	if (clear) for (int i = 0; i < W * H; i++) fb[i] = 0;

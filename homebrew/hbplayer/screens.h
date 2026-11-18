@@ -23,7 +23,7 @@ void ui_theme_set(int t);	/* palette, font, layout rotation; the next frame is d
 
 /* layout: title bar [0, TITLE_H), content, bottom status bar [BOTTOM_Y, H) */
 #define TITLE_H 28
-#define BOTTOM_Y (ui_theme ? 278 : 288)	/* SNRGY: the 3-row status strip is 42 px (gfx_rot) */
+#define BOTTOM_Y (ui_theme ? 274 : 288)	/* SNRGY: the 3-row status strip is 46 px (gfx_rot): 4 px of border above and below the dots */
 
 /* playing: 0 idle, 1 playing, 2 paused. np_title / np_artist: what the bottom bar shows (0 = nothing) */
 struct ui_status { int batt, charging, bt, hold, playing; const char *np_title, *np_artist; int np_idx, np_n, np_sec, np_total, np_sleep, np_speed;
@@ -89,7 +89,13 @@ struct player_view {
 	int shuffle, repeat;		/* SNRGY: the play mode shown under the cover (eng_shuffle, eng_repeat) */
 	int browsing, cursor;		/* SNRGY: the queue under the cover is being browsed; the highlighted row */
 	const char *(*qtitle)(int);	/* SNRGY: title of queue position i (0..ntr-1) */
+	int press_btn, press_scale;	/* SNRGY: a transport button being pressed (1 prev, 2 play, 3 next) and its scale x1000 */
+	int show_vis;			/* SNRGY: the spectrum analyzer in the cover's place */
+	const unsigned char *vis_h, *vis_pk;	/* its bars and peak caps (0..255), VIS_BANDS of each */
 };
+#define VIS_BANDS 24
+void scr_player_vis(const struct player_view *v);	/* only the analyzer square (and gfx_flip_rect it) */
+void scr_vis_rect(int *x, int *y, int *s);		/* where the analyzer is, in back-buffer rows */
 
 struct focus_view { int left, total, paused; const char *l1, *l2; };
 
@@ -123,7 +129,7 @@ extern int ui_aod, ui_aod_now, ui_strip_calm, ui_aod_level;	/* + the always-on b
 extern int ui_home_tab;		/* SNRGY home: 0 the list has the focus, 2 the RESUME header */
 extern const int home_order[];	/* SNRGY home: the slots in list order (no "Now playing": the RESUME tab is that) */
 extern const int home_order_n;
-#define PLAYER_ART_BIG 236	/* SNRGY player: the cover across the width; one control row under it */
+#define PLAYER_ART_BIG 216	/* SNRGY player: the cover, 12 px from the sides and the top; one control row under it */
 void scr_volume(int vol, int volmax);
 void scr_hold(void);
 int scr_message(const char *title, const char *l1, const char *l2);

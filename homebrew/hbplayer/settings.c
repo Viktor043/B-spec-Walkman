@@ -320,13 +320,14 @@ static void about_screen(void)
 	char vl[80]; snprintf(vl, sizeof vl, "Version %s", ver);
 	free_space("/contents", c, sizeof c); free_space(statedir, v, sizeof v);
 	snprintf(fr, sizeof fr, "Free: %s", c); snprintf(st, sizeof st, "Settings: %s", v);
-	scr_screen("About");	/* everything between the title and the strip (28..278), 20 px a line */
+	scr_screen("About");	/* everything between the title and the strip (28..274), 20 px a line */
 	int y = 34;
 	gfx_text_center(W / 2, y, hw_a91x ? "NW-A91x homebrew" : gfx_anim_intl() ? "NWZ-A820 homebrew" : "NW-A820 homebrew", C_WHITE, 1); y += 22;
 	gfx_text_center(W / 2, y, vl, C_WHITE, 1); y += 20;
 	if (*date) { gfx_text_center(W / 2, y, date, C_GREY, 1); y += 20; }
 	gfx_text_center(W / 2, y, fr, C_GREY, 1); y += 20;
 	gfx_text_center(W / 2, y, st, C_GREY, 1); y += 24;
+	gfx_text_center(W / 2, y, "© 2026 SNRGY Studios", C_WHITE, 1); y += 20;
 	gfx_text_center(W / 2, y, "License: GPL-2.0", C_GREY, 1); y += 20;
 	gfx_text_center(W / 2, y, "libmad · FAAD2 · Sonic", C_GREY, 1); y += 20;	/* each line under 208 px: 16 px margins */
 	gfx_text_center(W / 2, y, "lwIP · Mbed TLS", C_GREY, 1); y += 20;

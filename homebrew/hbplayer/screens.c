@@ -37,7 +37,7 @@ void ui_theme_set(int t)
 	}
 	th_strip = RGB(6, 6, 7); th_dot = RGB(0xF2, 0xF2, 0xF2); th_dotoff = RGB(0x18, 0x18, 0x1A);
 	gfx_face = gfx_caps = SNRGY;
-	gfx_rot = SNRGY ? H - 278 : 0;	/* the 42 px strip band on top */
+	gfx_rot = SNRGY ? H - 274 : 0;	/* the 46 px strip band on top */
 	gfx_invalidate();
 }
 
@@ -108,12 +108,12 @@ static int dm_text(int col, int row, const char *s, int maxcol)	/* returns the c
 	return col;
 }
 static int dm_w(const char *s) { int n = 0; for (const unsigned char *p = (const unsigned char *)s; *p; p++) if ((*p & 0xC0) != 0x80) n++; return n * DM_ADV; }
-/* the dots into the status band of the back buffer (278..320, shown on top): 2 px margin, 19 dot rows at 2 px,
- * then 4 px more of the strip so the dots never touch its edge */
-#define DM_Y 280
+/* the dots into the status band of the back buffer (274..320, shown on top): 4 px of border, 19 dot rows at 2 px,
+ * 4 px of border (2026-11-18: 2 px more each side, the home list has room since it has 6 rows) */
+#define DM_Y 278
 static void dm_flush(void)
 {
-	gfx_fill(0, 278, W, 2 + DM_ROWS * 2, th_strip);
+	gfx_fill(0, 274, W, 4 + DM_ROWS * 2, th_strip);
 	gfx_fill(0, DM_Y + DM_ROWS * 2, W, H - DM_Y - DM_ROWS * 2, ui_aod_now ? 0 : th_strip);	/* the strip runs down to the title */
 	for (int y = 0; y < DM_ROWS; y++) for (int x = 0; x < 120; x++) {
 		uint16_t *d = fb + (DM_Y + y * 2) * W + x * 2;
@@ -957,7 +957,7 @@ static void info_line(int y, struct img ic, const char *s)
 /* SNRGY now playing: the cover across the width, the counter and play mode under it, then the queue (album or
  * folder, in play order). One virtual column; while browsing (UP / DOWN) it scrolls to keep the cursor in view.
  * Time and progress are in the strip on top. */
-#define SP_ROW ((PLAYER_ART_BIG + 2 + BOTTOM_Y) / 2)	/* the centre line of the control row between the cover and the fold */
+#define SP_ROW ((12 + PLAYER_ART_BIG + BOTTOM_Y) / 2)	/* the centre line of the control row between the cover and the fold */
 #define SP_LIST BOTTOM_Y			/* the first queue row: just under the fold */
 static void icon_x4(int k, int cx, int cy, uint16_t c)	/* a line icon at 4x (the cover placeholder) */
 {
@@ -974,10 +974,16 @@ static uint16_t mix565(uint16_t d, uint16_t c, int a)	/* a 0..16 */
 	    b = ((d & 31) * (16 - a) + (c & 31) * a) >> 4;
 	return (uint16_t)(r << 11 | g << 5 | b);
 }
-struct aa_shape { int kind; float a, b, c, d, e, f; };	/* 0 rect x0 y0 x1 y1; 1 disc cx cy r; 2 triangle x0 y0 x1 y1 x2 y2 */
+struct aa_shape { int kind; float a, b, c, d, e, f; };	/* 0 rect x0 y0 x1 y1; 1 disc cx cy r; 2 triangle x0 y0 x1 y1 x2 y2; 3 rounded rect x0 y0 x1 y1 r */
 static int aa_in(const struct aa_shape *s, float x, float y)
 {
 	if (s->kind == 0) return x >= s->a && x < s->c && y >= s->b && y < s->d;
+	if (s->kind == 3) {
+		if (x < s->a || x >= s->c || y < s->b || y >= s->d) return 0;
+		float qx = x < s->a + s->e ? s->a + s->e - x : x > s->c - s->e ? x - (s->c - s->e) : 0;
+		float qy = y < s->b + s->e ? s->b + s->e - y : y > s->d - s->e ? y - (s->d - s->e) : 0;
+		return qx * qx + qy * qy <= s->e * s->e;
+	}
 	if (s->kind == 1) return (x - s->a) * (x - s->a) + (y - s->b) * (y - s->b) <= s->c * s->c;
 	float d1 = (x - s->c) * (s->b - s->d) - (s->a - s->c) * (y - s->d), d2 = (x - s->e) * (s->d - s->f) - (s->c - s->e) * (y - s->f),
 	      d3 = (x - s->a) * (s->f - s->b) - (s->e - s->a) * (y - s->b);
@@ -986,7 +992,7 @@ static int aa_in(const struct aa_shape *s, float x, float y)
 static void aa_draw(struct aa_shape s, uint16_t col)
 {
 	float x0, y0, x1, y1;
-	if (s.kind == 0) { x0 = s.a; y0 = s.b; x1 = s.c; y1 = s.d; }
+	if (s.kind == 0 || s.kind == 3) { x0 = s.a; y0 = s.b; x1 = s.c; y1 = s.d; }
 	else if (s.kind == 1) { x0 = s.a - s.c; y0 = s.b - s.c; x1 = s.a + s.c; y1 = s.b + s.c; }
 	else { x0 = fminf(s.a, fminf(s.c, s.e)); x1 = fmaxf(s.a, fmaxf(s.c, s.e)); y0 = fminf(s.b, fminf(s.d, s.f)); y1 = fmaxf(s.b, fmaxf(s.d, s.f)); }
 	for (int y = (int)y0 - 1; y <= (int)y1 + 1; y++) {
@@ -999,19 +1005,75 @@ static void aa_draw(struct aa_shape s, uint16_t col)
 		}
 	}
 }
-/* previous, play / pause (white on a red disc), next, centred at cy */
-static void transport(int cy, int paused, uint16_t c, uint16_t accent)
+/* 2026-11-18, after reference/playback buttons.png: previous / next as double arrows in grey, play / pause in the
+ * text colour (two rounded bars, or a triangle), 38 px apart, over a faint dotted line. A pressed button shrinks and
+ * dims (press_scale < 1000) and springs back on release. */
+static uint16_t dim565(uint16_t c, uint16_t bg, int a) { return mix565(bg, c, a); }	/* a: 16 = c, 0 = bg */
+static void transport(int cy, int paused, int press_btn, int press_scale)
 {
 	float m = W / 2.0f, y = cy + 0.5f;
-	for (int s = -1; s <= 1; s += 2) {	/* a bar on the outer side and a triangle pointing to it */
-		float cx = m + s * 50;
-		aa_draw((struct aa_shape){ 0, s < 0 ? cx - 8 : cx + 5.5f, y - 7, s < 0 ? cx - 5.5f : cx + 8, y + 7 }, c);
-		aa_draw((struct aa_shape){ 2, cx - s * 6.5f, y - 7, cx - s * 6.5f, y + 7, cx + s * 5.5f, y }, c);	/* base inside, tip at the bar */
+	uint16_t bg = th_paper, grey = C_GREY, ink = C_WHITE;
+	if (cy >= 0 && cy < BOTTOM_Y) for (int x = 44; x < W - 44; x += 4)	/* the dotted line, broken around the buttons */
+		if (fabsf(x - m) > 17 && fabsf(fabsf(x - m) - 38) > 16) fb[cy * W + x] = th_rule;
+	for (int b = 1; b <= 3; b++) {
+		float k = b == press_btn ? press_scale / 1000.0f : 1, cx = m + (b - 2) * 38;
+		uint16_t c = b == 2 ? ink : grey;
+		if (b == press_btn && press_scale < 1000) c = dim565(c, bg, 8 + (press_scale - 780) * 8 / 220);
+		if (b == 2) {
+			if (paused) aa_draw((struct aa_shape){ 2, cx - 6 * k, y - 10 * k, cx - 6 * k, y + 10 * k, cx + 10 * k, y }, c);
+			else for (int s = -1; s <= 1; s += 2)
+				aa_draw((struct aa_shape){ 3, cx + s * 4.5f * k - 2.75f * k, y - 10 * k, cx + s * 4.5f * k + 2.75f * k, y + 10 * k, 2.2f * k }, c);
+		} else {
+			int dir = b == 1 ? -1 : 1;	/* two triangles nose to tail, pointing dir */
+			for (int t = 0; t < 2; t++) {
+				float bx = cx + dir * (t * 9 - 9) * k;	/* base of this triangle */
+				aa_draw((struct aa_shape){ 2, bx, y - 7 * k, bx, y + 7 * k, bx + dir * 10 * k, y }, c);
+			}
+		}
 	}
-	aa_draw((struct aa_shape){ 1, m, y, 14.5f }, accent);
-	uint16_t in = RGB(255, 255, 255);
-	if (paused) aa_draw((struct aa_shape){ 2, m - 4.5f, y - 7.5f, m - 4.5f, y + 7.5f, m + 8, y }, in);	/* paused: show play */
-	else { aa_draw((struct aa_shape){ 0, m - 5.5f, y - 6.5f, m - 2, y + 6.5f }, in); aa_draw((struct aa_shape){ 0, m + 2, y - 6.5f, m + 5.5f, y + 6.5f }, in); }
+}
+/* the cover square's rounded corners (r 6): outside the arc, the page colour */
+static void round_corners(int x, int y, int s)
+{
+	const float r = 6;
+	for (int j = 0; j < 6; j++) for (int i = 0; i < 6; i++) {
+		float dx = r - (i + 0.5f), dy = r - (j + 0.5f), d = sqrtf(dx * dx + dy * dy) - r;
+		if (d <= -0.5f) continue;
+		int a = d >= 0.5f ? 16 : (int)((d + 0.5f) * 16);
+		int px[4] = { x + i, x + s - 1 - i, x + i, x + s - 1 - i }, py[4] = { y + j, y + j, y + s - 1 - j, y + s - 1 - j };
+		for (int q = 0; q < 4; q++) if (py[q] >= 0 && py[q] < BOTTOM_Y) fb[py[q] * W + px[q]] = mix565(fb[py[q] * W + px[q]], th_paper, a);
+	}
+}
+/* the spectrum analyzer, Winamp style: black, a faint dot grid, bars green -> yellow -> red by height, grey peak caps */
+static void vis_draw(int x0, int y0, int s, const unsigned char *h, const unsigned char *pk)
+{
+	for (int j = 0; j < s; j++) {
+		int y = y0 + j;
+		if (y < 0 || y >= BOTTOM_Y) continue;
+		uint16_t *d = fb + y * W + x0;
+		for (int i = 0; i < s; i++) d[i] = ((i & 3) == 1 && (j & 3) == 1) ? RGB(28, 28, 30) : 0;
+	}
+	if (!h) return;
+	int pad = 10, bw = (s - 2 * pad) / VIS_BANDS, top = y0 + pad, hh = s - 2 * pad, x = x0 + (s - bw * VIS_BANDS) / 2;
+	for (int b = 0; b < VIS_BANDS; b++, x += bw) {
+		int n = h[b] * hh / 255, p = pk ? pk[b] * hh / 255 : 0;
+		for (int k = 0; k < n; k++) {
+			int y = top + hh - 1 - k;
+			if (y < 0 || y >= BOTTOM_Y) continue;
+			int t = k * 255 / hh;	/* the colour belongs to the height, like Winamp: tall bars reach the red */
+			uint16_t c = t < 128 ? RGB(t * 2, 200, 24) : RGB(240, 200 - (t - 128) * 3 / 2, 24);
+			if ((y & 1) == 0) gfx_fill(x, y, bw - 2, 1, c);	/* scanlines: the classic segmented look */
+		}
+		if (p > 2) { int y = top + hh - 1 - p; if (y >= 0 && y < BOTTOM_Y) gfx_fill(x, y, bw - 2, 2, RGB(190, 190, 196)); }
+	}
+}
+void scr_vis_rect(int *x, int *y, int *s) { *s = PLAYER_ART_BIG; *x = (W - *s) / 2; *y = 12; }
+void scr_player_vis(const struct player_view *v)
+{
+	int x, y, s; scr_vis_rect(&x, &y, &s);
+	vis_draw(x, y, s, v->vis_h, v->vis_pk);
+	round_corners(x, y, s);
+	gfx_flip_rect(x, y, s, s);
 }
 static void snrgy_player(const struct player_view *v)
 {
@@ -1023,36 +1085,27 @@ static void snrgy_player(const struct player_view *v)
 		if (off < 0) off = 0;
 	}
 	bg_fill(0, 0, W, BOTTOM_Y, 0);
-	int cs = PLAYER_ART_BIG, cx = (W - cs) / 2, cy = 2 - off;
+	int cs = PLAYER_ART_BIG, cx = (W - cs) / 2, cy = 12 - off;	/* 12 px around the cover, like its sides */
 	if (cy + cs > 0) {
 		if (v->show_lrc) {	/* the user's .lrc lines in the cover's place: previous, current, next */
 			rrect(cx, cy, cs, cs, 6, th_surf, 1);
 			if (v->lrc_prev) gfx_text_wrap(cx + 10, cy + 40, v->lrc_prev, C_GREY, cs - 20, 2, 22);
 			gfx_text_wrap(cx + 10, cy + 96, v->lrc_cur && *v->lrc_cur ? v->lrc_cur : "...", C_WHITE, cs - 20, 3, 22);
 			if (v->lrc_next) gfx_text_wrap(cx + 10, cy + 170, v->lrc_next, C_GREY, cs - 20, 2, 22);
-		} else if (v->art.w == cs) {
+		} else if (v->show_vis || v->art.w != cs) vis_draw(cx, cy, cs, v->vis_h, v->vis_pk);	/* no cover: the analyzer */
+		else if (v->art.w == cs) {
 			for (int j = 0; j < cs; j++) {
 				int y = cy + j;
 				if (y < 0) continue;
 				if (y >= BOTTOM_Y) break;
 				memcpy(fb + y * W + cx, v->art.px + j * cs, cs * 2);
 			}
-		} else {
-			gfx_fill(cx, cy < 0 ? 0 : cy, cs, cy < 0 ? cs + cy : cs, 0);	/* no cover: black, a big red note */
-			int nx = W / 2 - SNRGY_NOTE_BIG / 2, ny = cy + cs / 2 - SNRGY_NOTE_BIG / 2;
-			for (int j = 0; j < SNRGY_NOTE_BIG; j++) {
-				int yy = ny + j;
-				if (yy < 0 || yy >= BOTTOM_Y) continue;
-				for (int i = 0; i < SNRGY_NOTE_BIG; i++) {
-					int a = snrgy_note_big[j * SNRGY_NOTE_BIG + i];
-					if (a) fb[yy * W + nx + i] = RGB(0xE2 * a / 15, 0x06 * a / 15, 0x13 * a / 15);
-				}
-			}
 		}
+		if (!v->show_lrc) round_corners(cx, cy, cs);
 	}
 	int ry = SP_ROW - off;	/* the one row under the cover: play mode | previous, play / pause, next | the queue below */
 	if (ry > -20 && ry < BOTTOM_Y + 20) {
-		transport(ry, v->paused, C_WHITE, RGB(0xE2, 0x06, 0x13));
+		transport(ry, v->paused, v->press_btn, v->press_scale ? v->press_scale : 1000);
 		if (!v->meta) {	/* music: in order / shuffle / repeat all / repeat one (shuffle + repeat: both icons) */
 			int m = v->shuffle ? 1 : v->repeat == 1 ? 2 : v->repeat == 2 ? 3 : 0;
 			snrgy_icon_draw(SNRGY_ICON_MODE + m, 8, ry - SNRGY_ICON / 2, C_WHITE);
@@ -1198,11 +1251,18 @@ void scr_calc(const struct calc_view *v)
 void scr_info(const char *label, const char *text)
 {
 	scr_screen("Info");
-	const uint16_t red = SNRGY ? RGB(0xE2, 0x06, 0x13) : C_ORANGE;
 	int cx = 26, cy = 46, ly = 36;	/* the label wraps to two lines at most; the rule and the text follow it */
-	for (int j = -11; j <= 11; j++) for (int i = -11; i <= 11; i++)
-		if (i * i + j * j <= 121) gfx_fill(cx + i, cy + j, 1, 1, red);
-	gfx_text_center(cx, cy - LINE_H / 2 + 1, "i", RGB(255, 255, 255), 1);
+	/* an italic serif "i" in white on a black disc (black look: a thin grey ring around it) */
+	if (ui_theme == 2) aa_draw((struct aa_shape){ 1, cx + 0.5f, cy + 0.5f, 12.5f }, th_rule);
+	aa_draw((struct aa_shape){ 1, cx + 0.5f, cy + 0.5f, ui_theme == 2 ? 11.5f : 12.5f }, RGB(0, 0, 0));
+	{
+		float x = cx + 0.5f, y = cy + 0.5f; uint16_t w = RGB(255, 255, 255);
+		aa_draw((struct aa_shape){ 1, x + 1.9f, y - 6.4f, 1.8f }, w);	/* the dot, over the slant */
+		aa_draw((struct aa_shape){ 2, x - 0.1f, y - 2.6f, x + 2.5f, y - 2.6f, x - 2.3f, y + 5.6f }, w);	/* the slanted stem */
+		aa_draw((struct aa_shape){ 2, x + 2.5f, y - 2.6f, x + 0.3f, y + 5.6f, x - 2.3f, y + 5.6f }, w);
+		aa_draw((struct aa_shape){ 2, x - 2.6f, y - 2.7f, x + 0.6f, y - 2.7f, x + 0.2f, y - 1.2f }, w);	/* serif, top left */
+		aa_draw((struct aa_shape){ 2, x - 2.3f, y + 5.6f, x + 2.4f, y + 5.6f, x + 3.4f, y + 3.9f }, w);	/* the foot's curl */
+	}
 	int n = gfx_text_wrap(46, ly, label, C_WHITE, W - 46 - 16, 2, 22);
 	int ry = ly + (n > 1 ? n : 1) * 22 + 6;
 	if (ry < cy + 18) ry = cy + 18;
@@ -1307,59 +1367,81 @@ void scr_splash(const char *line)
 	if (line) gfx_text_center(W / 2, srow(258), line, RGB(120, 120, 120), 1);
 }
 
-/* ---------- the welcome at power-on (2026-11-18): Sony's particle animation, then the gold logo ----------
- * NW-A82x: Sony's own frames (dui_tex groups 0, 2, 3: blue particles swirling in, a ring of dots, the ring fading).
- * NW-A91x: its texture pack has no such frames, so the same idea is drawn: 16 particles spiral in and settle on a
- * ring, which fades as the logo comes up. 60 ms a frame; scr_welcome_frame returns 0 after the last one. */
-#define WEL_CY 149	/* screen row of the logo's centre: the animation is centred on it */
-static void blit_screen_center(struct img im, int cx, int cy)
+/* ---------- the welcome at power-on (2026-11-18): after the PlayStation 2's start-up ----------
+ * In the spirit of the PS2 boot (not its footage): a deep blue haze with drifting sparks, a field of translucent
+ * towers rising in perspective while the view drifts, a pale flash, then the logo in the PS2's blues on black.
+ * 60 ms a frame, ~4.4 s; scr_welcome_frame returns 0 after the last frame. Drawn in screen rows (srow). */
+#define WEL_N 74
+static uint16_t *wel_haze;	/* the blue haze, built once (screen rows) */
+static void wel_px(int x, int y, uint16_t c, int a)	/* blend c over screen pixel (x, y), a 0..16 */
 {
-	for (int j = 0; j < im.h; j++) {
-		int sy = cy - im.h / 2 + j;
-		if (sy < 0 || sy >= H) continue;
-		uint16_t *d = fb + srow(sy) * W;
-		for (int i = 0; i < im.w; i++) { int x = cx - im.w / 2 + i; if (x >= 0 && x < W) d[x] = im.px[j * im.w + i]; }
-	}
+	if (x < 0 || x >= W || y < 0 || y >= H || a <= 0) return;
+	uint16_t *d = fb + srow(y) * W + x;
+	*d = a >= 16 ? c : mix565(*d, c, a);
 }
-static void glow_dot(float cx, float cy, float r, int bright)	/* a soft blue particle, added to what is there */
+static void wel_add(int x, int y, int r, int g, int b)	/* additive light */
 {
-	for (int y = (int)(cy - r) - 1; y <= (int)(cy + r) + 1; y++) {
-		if (y < 0 || y >= H) continue;
-		uint16_t *d = fb + srow(y) * W;
-		for (int x = (int)(cx - r) - 1; x <= (int)(cx + r) + 1; x++) {
-			if (x < 0 || x >= W) continue;
-			float dd = sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy)) / r;
-			if (dd >= 1) continue;
-			int a = (int)((1 - dd) * bright * (dd < 0.35f ? 1.6f : 1));	/* a bright core and a soft edge */
-			int rr = (d[x] >> 11) + (a * 6 >> 8), gg = ((d[x] >> 5) & 63) + (a * 36 >> 8), bb = (d[x] & 31) + (a * 31 >> 8);
-			d[x] = (uint16_t)((rr > 31 ? 31 : rr) << 11 | (gg > 63 ? 63 : gg) << 5 | (bb > 31 ? 31 : bb));
-		}
-	}
+	if (x < 0 || x >= W || y < 0 || y >= H) return;
+	uint16_t *d = fb + srow(y) * W + x;
+	int rr = (*d >> 11) + r, gg = ((*d >> 5) & 63) + g, bb = (*d & 31) + b;
+	*d = (uint16_t)((rr > 31 ? 31 : rr < 0 ? 0 : rr) << 11 | (gg > 63 ? 63 : gg < 0 ? 0 : gg) << 5 | (bb > 31 ? 31 : bb < 0 ? 0 : bb));
 }
+static float wel_ease(float t) { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); }
 int scr_welcome_frame(int f)
 {
-	static const unsigned char seq[][2] = { {0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{0,6},{0,7},{0,8},{0,9},{0,10},
-		{2,0},{2,1},{2,2},{2,3},{3,0},{3,1},{3,2},{3,3},{3,4},{3,5},{3,6},{3,7},{3,8},{3,9},{3,10} };
-	const int n = sizeof seq / sizeof seq[0], logo_at = 18, last = n + 14;
-	if (f > last) return 0;
-	for (int i = 0; i < W * H; i++) fb[i] = 0;
-	int sony = gfx_tex(0, 0).w && gfx_tex(3, 10).w;
-	if (f < n) {
-		if (sony) { struct img im = gfx_tex(seq[f][0], seq[f][1]); if (im.w) blit_screen_center(im, W / 2, WEL_CY); }
-		else {	/* drawn: spiral in over 15 frames, hold the ring, then fade it */
-			float p = f < 15 ? f / 15.0f : 1, fade = f < 15 ? 1 : 1 - (f - 15) / 11.0f;
-			float ease = 1 - (1 - p) * (1 - p) * (1 - p);
-			for (int k = 0; k < 16; k++) {
-				float a = k * 6.2831853f / 16 + (1 - ease) * 3.0f, r = 56 + (1 - ease) * 110;
-				glow_dot(W / 2 + r * cosf(a), WEL_CY + r * sinf(a), 6 + (1 - ease) * 5, (int)(320 * fade));
-			}
+	if (f >= WEL_N) return 0;
+	if (!wel_haze) {
+		static uint16_t buf[W * H];
+		wel_haze = buf;
+		for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {	/* a glow low in the frame, fading to black at the top */
+			float dx = (x - W / 2) / 170.0f, dy = (y - 230) / 210.0f, d = sqrtf(dx * dx + dy * dy);
+			float k = d > 1 ? 0 : (1 - d) * (1 - d);
+			buf[y * W + x] = RGB((int)(4 + 10 * k), (int)(10 + 46 * k), (int)(28 + 120 * k));
 		}
 	}
-	if (f >= logo_at) {
-		int a = (f - logo_at) * 256 / 10;
-		gfx_walkman_logo_a(118, a > 256 ? 256 : a, 0);
-		int g = 40 + (a > 256 ? 256 : a) * 100 / 256;
-		gfx_text_center(W / 2, srow(258), "Welcome", RGB(g, g, g), 1);
+	float haze = wel_ease(f / 12.0f) * (1 - wel_ease((f - 44) / 6.0f));
+	for (int y = 0; y < H; y++) {	/* black + haze */
+		uint16_t *d = fb + srow(y) * W, *h = wel_haze + y * W;
+		if (haze <= 0) { memset(d, 0, W * 2); continue; }
+		int a = (int)(haze * 16);
+		for (int x = 0; x < W; x++) d[x] = mix565(0, h[x], a);
+	}
+	if (f < 50) {	/* sparks: rising slowly, twinkling */
+		for (int i = 0; i < 46; i++) {
+			unsigned s = i * 2654435761u;
+			float x = (s % 240), y0 = 40 + ((s >> 8) % 280), y = y0 - f * (0.6f + (s >> 20) % 10 * 0.12f);
+			int tw = (int)(8 * (0.5f + 0.5f * sinf(f * 0.5f + i))) + 4;
+			int a = (int)(tw * haze);
+			wel_add((int)x, (int)y, a / 3, a * 2 / 3 + 1, a / 2 + 2);
+			if (tw > 9) { wel_add((int)x + 1, (int)y, a / 6, a / 3, a / 4); wel_add((int)x, (int)y + 1, a / 6, a / 3, a / 4); }
+		}
+	}
+	if (f >= 10 && f < 52) {	/* the towers: 9 x 6 columns on a plane, rising staggered, the view drifting right */
+		float cam = -0.8f + (f - 10) * 0.035f, fade = 1 - wel_ease((f - 42) / 10.0f), horizon = 150, fl = 150;
+		for (int row = 5; row >= 0; row--) for (int col = 0; col < 9; col++) {
+			unsigned s = (row * 9 + col) * 2246822519u;
+			float z = 1.6f + row * 0.85f, x = (col - 4) * 0.62f;
+			float hgt = 0.25f + (s >> 24) / 255.0f * 1.9f, rise = wel_ease((f - 12 - (row + (col & 3)) * 1.6f) / 12.0f);
+			if (rise <= 0) continue;
+			float px = W / 2 + (x - cam) * fl / z, base = horizon + 1.1f * fl / z, top = base - hgt * rise * fl / z, w = 0.42f * fl / z;
+			int x0 = (int)(px - w / 2), x1 = (int)(px + w / 2), y0 = (int)top, y1 = (int)base;
+			if (y1 - y0 < 3) continue;	/* not up yet: no stray line on the floor */
+			int a = (int)(6 * fade * (1.2f - row * 0.12f));	/* glassy: faint faces, brighter edges and top */
+			for (int y = y0; y < y1; y++) for (int xx = x0; xx < x1; xx++) wel_px(xx, y, RGB(120, 170, 255), a);
+			for (int y = y0; y < y1; y++) { wel_px(x0, y, RGB(170, 210, 255), a * 2); wel_px(x1 - 1, y, RGB(170, 210, 255), a * 2); }
+			for (int xx = x0; xx < x1; xx++) { wel_px(xx, y0, RGB(220, 240, 255), a * 3); wel_px(xx, y0 + 1, RGB(170, 210, 255), a * 2); }
+		}
+	}
+	if (f >= 44 && f < 56) {	/* the pale flash between the towers and the logo */
+		float k = f < 49 ? (f - 44) / 5.0f : 1 - (f - 49) / 7.0f;
+		int a = (int)(k * 14);
+		for (int y = 0; y < H; y++) { uint16_t *d = fb + srow(y) * W; for (int x = 0; x < W; x++) d[x] = mix565(d[x], RGB(200, 225, 255), a); }
+	}
+	if (f >= 50) {
+		int a = (int)(wel_ease((f - 50) / 12.0f) * 256);
+		gfx_walkman_logo_a(118, a, 0);
+		int g = 30 + a * 120 / 256;
+		gfx_text_center(W / 2, srow(258), "Welcome", RGB(g * 3 / 4, g * 7 / 8, g), 1);
 	}
 	return 1;
 }
@@ -1397,7 +1479,7 @@ void scr_focus(const struct focus_view *v)
 {
 	background();
 	struct img ring = gfx_tex(T_RING);
-	int cy = SNRGY ? 124 : 128;	/* SNRGY: a 92 px ring, so the two lines below clear it and the bottom edge */
+	int cy = SNRGY ? 120 : 128;	/* SNRGY: a 92 px ring (bottom 212), so the two lines below clear it and the bottom edge */
 	if (SNRGY) for (int t = 0; t < 1440; t++) { double q = t * 3.14159265 / 720; for (int r = 91; r <= 92; r++) gfx_fill(W / 2 + (int)lround(r * cos(q)), cy + (int)lround(r * sin(q)), 1, 1, C_WHITE); }
 	else if (ring.w) blit_max(ring, 0, cy - ring.h / 2);
 	scr_status("Focus");
@@ -1406,7 +1488,7 @@ void scr_focus(const struct focus_view *v)
 	snprintf(b, sizeof b, "%02d:%02d", l / 60, l % 60);
 	big_digits(W / 2, cy - 18, b);
 	if (v->paused) gfx_text_center(W / 2, cy + 26, "PAUSED", C_ORANGE, 1);
-	if (v->l1) gfx_text_center(W / 2, BOTTOM_Y - 52, v->l1, C_GREY, 1);	/* below the ring (bottom 216), 8 px above the edge */
+	if (v->l1) gfx_text_center(W / 2, BOTTOM_Y - 52, v->l1, C_GREY, 1);	/* below the ring (bottom 212), clear of the edge */
 	if (v->l2) gfx_text_center(W / 2, BOTTOM_Y - 30, v->l2, C_GREY, 1);
 }
 
